@@ -7,6 +7,15 @@ const tocDock = document.getElementById("tocDock");
 const tocToggle = document.getElementById("tocToggle");
 const toc = document.getElementById("toc");
 const reportContent = document.getElementById("reportContent");
+const readerSettingsToggle = document.getElementById("readerSettingsToggle");
+const readerSettingsPanel = document.getElementById("readerSettingsPanel");
+const contentFontDecrease = document.getElementById("contentFontDecrease");
+const contentFontIncrease = document.getElementById("contentFontIncrease");
+const contentFontValue = document.getElementById("contentFontValue");
+const tocFontDecrease = document.getElementById("tocFontDecrease");
+const tocFontIncrease = document.getElementById("tocFontIncrease");
+const tocFontValue = document.getElementById("tocFontValue");
+const hideTocNumbersInput = document.getElementById("hideTocNumbers");
 let activeCitation = null;
 let citeRefSerial = 0;
 let citeFlashEndTimer = null;
@@ -16,9 +25,25 @@ let tocScrollSpyPaused = false;
 let tocScrollSpyTimer = null;
 let tocScrollSpyResumeTimer = null;
 
+const SETTINGS_KEYS = {
+  contentFontScale: "meowReportMarkdown.contentFontScale",
+  tocFontScale: "meowReportMarkdown.tocFontScale",
+  hideTocNumbers: "meowReportMarkdown.hideTocNumbers"
+};
+const FONT_SCALE_MIN = 0.8;
+const FONT_SCALE_MAX = 1.5;
+const FONT_SCALE_STEP = 0.1;
+
+const readerSettings = {
+  contentFontScale: 1,
+  tocFontScale: 1,
+  hideTocNumbers: false
+};
+
 initTocDock();
 initTocResize();
 initTocScrollSpy();
+initReaderSettings();
 
 window.addEventListener("message", (event) => {
   const message = event.data;
@@ -28,6 +53,7 @@ window.addEventListener("message", (event) => {
 });
 
 document.addEventListener("click", handleReportClick);
+document.addEventListener("click", handleReaderSettingsOutsideClick);
 
 if (vscode) {
   vscode.postMessage({ type: "ready" });
@@ -66,6 +92,131 @@ function setTocCollapsed(collapsed) {
     }
   } else {
     updateActiveToc();
+  }
+}
+
+function initReaderSettings() {
+  if (!readerSettingsToggle || !readerSettingsPanel) {
+    return;
+  }
+
+  loadReaderSettings();
+  applyReaderSettings();
+  updateReaderSettingsUi();
+
+  readerSettingsToggle.addEventListener("click", (event) => {
+    event.stopPropagation();
+    setReaderSettingsOpen(!isReaderSettingsOpen());
+  });
+
+  contentFontDecrease?.addEventListener("click", () => {
+    adjustFontScale("content", -FONT_SCALE_STEP);
+  });
+  contentFontIncrease?.addEventListener("click", () => {
+    adjustFontScale("content", FONT_SCALE_STEP);
+  });
+  tocFontDecrease?.addEventListener("click", () => {
+    adjustFontScale("toc", -FONT_SCALE_STEP);
+  });
+  tocFontIncrease?.addEventListener("click", () => {
+    adjustFontScale("toc", FONT_SCALE_STEP);
+  });
+  hideTocNumbersInput?.addEventListener("change", () => {
+    readerSettings.hideTocNumbers = Boolean(hideTocNumbersInput.checked);
+    saveReaderSettings();
+    refreshTocLabels();
+  });
+}
+
+function isReaderSettingsOpen() {
+  return readerSettingsToggle?.getAttribute("aria-expanded") === "true";
+}
+
+function setReaderSettingsOpen(open) {
+  if (!readerSettingsToggle || !readerSettingsPanel) {
+    return;
+  }
+  readerSettingsToggle.setAttribute("aria-expanded", String(open));
+  readerSettingsPanel.hidden = !open;
+}
+
+function handleReaderSettingsOutsideClick(event) {
+  if (!isReaderSettingsOpen()) {
+    return;
+  }
+  if (event.target.closest(".reader-settings-root")) {
+    return;
+  }
+  setReaderSettingsOpen(false);
+}
+
+function loadReaderSettings() {
+  const savedContentScale = Number.parseFloat(localStorage.getItem(SETTINGS_KEYS.contentFontScale) || "1");
+  const savedTocScale = Number.parseFloat(localStorage.getItem(SETTINGS_KEYS.tocFontScale) || "1");
+  readerSettings.contentFontScale = clampFontScale(savedContentScale);
+  readerSettings.tocFontScale = clampFontScale(savedTocScale);
+  readerSettings.hideTocNumbers = localStorage.getItem(SETTINGS_KEYS.hideTocNumbers) === "1";
+}
+
+function saveReaderSettings() {
+  localStorage.setItem(SETTINGS_KEYS.contentFontScale, String(readerSettings.contentFontScale));
+  localStorage.setItem(SETTINGS_KEYS.tocFontScale, String(readerSettings.tocFontScale));
+  localStorage.setItem(SETTINGS_KEYS.hideTocNumbers, readerSettings.hideTocNumbers ? "1" : "0");
+}
+
+function clampFontScale(value) {
+  if (!Number.isFinite(value)) {
+    return 1;
+  }
+  return Math.min(FONT_SCALE_MAX, Math.max(FONT_SCALE_MIN, Math.round(value * 10) / 10));
+}
+
+function adjustFontScale(target, delta) {
+  const key = target === "toc" ? "tocFontScale" : "contentFontScale";
+  readerSettings[key] = clampFontScale(readerSettings[key] + delta);
+  saveReaderSettings();
+  applyReaderSettings();
+  updateReaderSettingsUi();
+}
+
+function applyReaderSettings() {
+  document.documentElement.style.setProperty("--content-font-scale", String(readerSettings.contentFontScale));
+  document.documentElement.style.setProperty("--toc-font-scale", String(readerSettings.tocFontScale));
+}
+
+function updateReaderSettingsUi() {
+  if (contentFontValue) {
+    contentFontValue.textContent = formatFontScaleLabel(readerSettings.contentFontScale);
+  }
+  if (tocFontValue) {
+    tocFontValue.textContent = formatFontScaleLabel(readerSettings.tocFontScale);
+  }
+  if (hideTocNumbersInput) {
+    hideTocNumbersInput.checked = readerSettings.hideTocNumbers;
+  }
+  contentFontDecrease?.toggleAttribute("disabled", readerSettings.contentFontScale <= FONT_SCALE_MIN);
+  contentFontIncrease?.toggleAttribute("disabled", readerSettings.contentFontScale >= FONT_SCALE_MAX);
+  tocFontDecrease?.toggleAttribute("disabled", readerSettings.tocFontScale <= FONT_SCALE_MIN);
+  tocFontIncrease?.toggleAttribute("disabled", readerSettings.tocFontScale >= FONT_SCALE_MAX);
+}
+
+function formatFontScaleLabel(scale) {
+  return `${Math.round(scale * 100)}%`;
+}
+
+function getTocLinkLabel(outlineNumber, text) {
+  if (readerSettings.hideTocNumbers) {
+    return String(text || "").trim();
+  }
+  return formatOutlineLabel(outlineNumber, text);
+}
+
+function refreshTocLabels() {
+  if (!toc) {
+    return;
+  }
+  for (const link of toc.querySelectorAll("a[data-outline-text]")) {
+    link.textContent = getTocLinkLabel(link.dataset.outlineNumber, link.dataset.outlineText);
   }
 }
 
@@ -348,13 +499,15 @@ function scrollToAnchor(anchorId) {
   scrollElementToViewport(target, { block: "start", behavior: "smooth" });
 }
 
-function createTocLink(className, anchorId, label, level = 0) {
+function createTocLink(className, anchorId, outlineNumber, text, level = 0) {
   const link = document.createElement("a");
   link.className = className;
   link.href = `#${anchorId}`;
   link.dataset.anchor = anchorId;
   link.dataset.level = String(level);
-  link.textContent = label;
+  link.dataset.outlineNumber = String(outlineNumber || "");
+  link.dataset.outlineText = String(text || "");
+  link.textContent = getTocLinkLabel(outlineNumber, text);
   return link;
 }
 
@@ -390,18 +543,18 @@ function createFileToc(file) {
   const section = document.createElement("section");
   section.className = "toc-file";
   const fileAnchor = `file-${slugify(file.name)}`;
-  const fileLabel = formatOutlineLabel(file.outlineNumber, file.label);
   const headingTree = buildHeadingTree(file.numberedHeadings || []);
 
   if (!headingTree.length) {
-    section.appendChild(createTocLink("toc-file-title", fileAnchor, fileLabel, 0));
+    section.appendChild(createTocLink("toc-file-title", fileAnchor, file.outlineNumber, file.label, 0));
     return section;
   }
 
   section.appendChild(
     createTocBranch({
       anchorId: fileAnchor,
-      label: fileLabel,
+      outlineNumber: file.outlineNumber,
+      text: file.label,
       className: "toc-file-title",
       level: 0,
       children: headingTree
@@ -426,7 +579,7 @@ function buildHeadingTree(headings) {
   return root.children;
 }
 
-function createTocBranch({ anchorId, label, className, level, children }) {
+function createTocBranch({ anchorId, outlineNumber, text, className, level, children }) {
   const branch = document.createElement("div");
   branch.className = "toc-branch";
   branch.dataset.collapsed = "0";
@@ -439,15 +592,12 @@ function createTocBranch({ anchorId, label, className, level, children }) {
     foldButton.type = "button";
     foldButton.className = "toc-fold";
     foldButton.setAttribute("aria-expanded", "true");
+    foldButton.setAttribute("aria-label", "折叠子目录");
     foldButton.textContent = "▾";
     row.appendChild(foldButton);
-  } else {
-    const spacer = document.createElement("span");
-    spacer.className = "toc-fold-spacer";
-    row.appendChild(spacer);
   }
 
-  row.appendChild(createTocLink(className, anchorId, label, level));
+  row.appendChild(createTocLink(className, anchorId, outlineNumber, text, level));
   branch.appendChild(row);
 
   if (children.length) {
@@ -465,7 +615,8 @@ function createTocBranch({ anchorId, label, className, level, children }) {
 function renderHeadingNode(node) {
   return createTocBranch({
     anchorId: node.heading.anchor,
-    label: formatOutlineLabel(node.heading.outlineNumber, node.heading.cleanText),
+    outlineNumber: node.heading.outlineNumber,
+    text: node.heading.cleanText,
     className: `toc-heading level-${Math.min(node.heading.level, 4)}`,
     level: node.heading.level,
     children: node.children

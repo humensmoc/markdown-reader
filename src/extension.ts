@@ -334,6 +334,36 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     </aside>
     <article id="reportContent" class="report-content"></article>
   </main>
+  <div class="reader-settings-root">
+    <button id="readerSettingsToggle" type="button" class="reader-settings-toggle" aria-expanded="false" aria-controls="readerSettingsPanel" title="阅读设置">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm8.94 4.88a8.96 8.96 0 0 0 .06-1.76l2.03-1.58a.75.75 0 0 0 .18-.96l-1.92-3.32a.75.75 0 0 0-.9-.33l-2.39.96a9.06 9.06 0 0 0-1.52-.88l-.36-2.54A.75.75 0 0 0 14.9 2h-3.8a.75.75 0 0 0-.74.65l-.36 2.54c-.54.22-1.05.5-1.52.88l-2.39-.96a.75.75 0 0 0-.9.33L2.27 8.96a.75.75 0 0 0 .18.96l2.03 1.58c-.04.29-.06.58-.06.88s.02.59.06.88L2.45 14.9a.75.75 0 0 0-.18.96l1.92 3.32c.18.31.57.45.9.33l2.39-.96c.47.38.98.66 1.52.88l.36 2.54c.08.57.62 1 1.19 1h3.8c.57 0 1.11-.43 1.19-1l.36-2.54c.54-.22 1.05-.5 1.52-.88l2.39.96c.33.12.72-.02.9-.33l1.92-3.32a.75.75 0 0 0-.18-.96l-2.03-1.58Z"/></svg>
+    </button>
+    <div id="readerSettingsPanel" class="reader-settings-panel" hidden role="dialog" aria-label="阅读设置">
+      <section class="reader-settings-group">
+        <h2 class="reader-settings-label">正文字号</h2>
+        <div class="reader-settings-control">
+          <button id="contentFontDecrease" type="button" aria-label="缩小正文字号">−</button>
+          <span id="contentFontValue" class="reader-settings-value">100%</span>
+          <button id="contentFontIncrease" type="button" aria-label="放大正文字号">+</button>
+        </div>
+      </section>
+      <section class="reader-settings-group">
+        <h2 class="reader-settings-label">目录字号</h2>
+        <div class="reader-settings-control">
+          <button id="tocFontDecrease" type="button" aria-label="缩小目录字号">−</button>
+          <span id="tocFontValue" class="reader-settings-value">100%</span>
+          <button id="tocFontIncrease" type="button" aria-label="放大目录字号">+</button>
+        </div>
+      </section>
+      <section class="reader-settings-group">
+        <label class="reader-settings-switch" for="hideTocNumbers">
+          <span>隐藏目录编号</span>
+          <input id="hideTocNumbers" type="checkbox" />
+          <span class="reader-settings-switch-ui" aria-hidden="true"></span>
+        </label>
+      </section>
+    </div>
+  </div>
   <script nonce="${nonce}" src="${jsUri}"></script>
 </body>
 </html>`;
