@@ -9,13 +9,32 @@ type ViewerMessage =
 
 const READER_VIEW_TYPE = "meowReportMarkdown.viewer";
 const textModeUris = new Set<string>();
+const extensionActivatedAt = Date.now();
+const STARTUP_GRACE_MS = 1200;
+
+async function ensureTextDocumentReady(uri: vscode.Uri): Promise<vscode.TextDocument> {
+  const document = await vscode.workspace.openTextDocument(uri);
+  const openedAsText = vscode.window.tabGroups.all.some((group) =>
+    group.tabs.some(
+      (tab) => tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === uri.toString()
+    )
+  );
+
+  if (!openedAsText) {
+    await vscode.window.showTextDocument(document, { preview: false, preserveFocus: true });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+
+  return document;
+}
 
 async function openInReaderMode(uri: vscode.Uri): Promise<void> {
-  // Cursor may fail CustomTextEditor open if the backing TextDocument is not
-  // initialized yet ("Assertion Failed: Argument is `undefined` or `null`").
-  await vscode.workspace.openTextDocument(uri);
+  // Cursor requires the backing TextDocument to exist in the text editor model
+  // service before CustomTextEditor can open ("Assertion Failed: Argument is
+  // `undefined` or `null`").
+  await ensureTextDocumentReady(uri);
 
-  const delays = [0, 120, 300];
+  const delays = [0, 200, 500, 900];
   let lastError: unknown;
   for (const delayMs of delays) {
     if (delayMs > 0) {
@@ -86,6 +105,11 @@ async function maybeAutoOpenReaderMode(uri: vscode.Uri): Promise<void> {
     return;
   }
 
+  const startupWait = Math.max(0, STARTUP_GRACE_MS - (Date.now() - extensionActivatedAt));
+  if (startupWait > 0) {
+    await new Promise((resolve) => setTimeout(resolve, startupWait));
+  }
+
   try {
     await openInReaderMode(uri);
   } catch {
@@ -135,7 +159,7 @@ function setupAutoOpenReaderMode(context: vscode.ExtensionContext): void {
 
         setTimeout(() => {
           void maybeAutoOpenReaderMode(uri);
-        }, 300);
+        }, 400);
       }
     })
   );
@@ -364,9 +388,25 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         </div>
       </section>
       <section class="reader-settings-group">
-        <label class="reader-settings-switch" for="hideOutlineNumbers">
-          <span>隐藏标题编号</span>
-          <input id="hideOutlineNumbers" type="checkbox" />
+        <h2 class="reader-settings-label">标题</h2>
+        <label class="reader-settings-switch" for="showTocNumbers">
+          <span>显示目录编号</span>
+          <input id="showTocNumbers" type="checkbox" checked />
+          <span class="reader-settings-switch-ui" aria-hidden="true"></span>
+        </label>
+        <label class="reader-settings-switch" for="showContentNumbers">
+          <span>显示正文编号</span>
+          <input id="showContentNumbers" type="checkbox" checked />
+          <span class="reader-settings-switch-ui" aria-hidden="true"></span>
+        </label>
+        <label class="reader-settings-switch" for="headingFontScale">
+          <span>标题逐级缩小</span>
+          <input id="headingFontScale" type="checkbox" checked />
+          <span class="reader-settings-switch-ui" aria-hidden="true"></span>
+        </label>
+        <label class="reader-settings-switch" for="rainbowHeadingColors">
+          <span>彩虹标题颜色</span>
+          <input id="rainbowHeadingColors" type="checkbox" />
           <span class="reader-settings-switch-ui" aria-hidden="true"></span>
         </label>
       </section>

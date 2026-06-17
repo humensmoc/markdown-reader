@@ -12,7 +12,10 @@ const readerSettingsPanel = document.getElementById("readerSettingsPanel");
 const fontDecrease = document.getElementById("fontDecrease");
 const fontIncrease = document.getElementById("fontIncrease");
 const fontValue = document.getElementById("fontValue");
-const hideOutlineNumbersInput = document.getElementById("hideOutlineNumbers");
+const showTocNumbersInput = document.getElementById("showTocNumbers");
+const showContentNumbersInput = document.getElementById("showContentNumbers");
+const headingFontScaleInput = document.getElementById("headingFontScale");
+const rainbowHeadingColorsInput = document.getElementById("rainbowHeadingColors");
 let activeCitation = null;
 let citeRefSerial = 0;
 let citeFlashEndTimer = null;
@@ -24,11 +27,15 @@ let tocScrollSpyResumeTimer = null;
 
 const SETTINGS_KEYS = {
   fontScale: "meowReportMarkdown.fontScale",
-  hideOutlineNumbers: "meowReportMarkdown.hideOutlineNumbers"
+  showTocNumbers: "meowReportMarkdown.showTocNumbers",
+  showContentNumbers: "meowReportMarkdown.showContentNumbers",
+  headingFontScale: "meowReportMarkdown.headingFontScale",
+  rainbowHeadingColors: "meowReportMarkdown.rainbowHeadingColors"
 };
 const LEGACY_SETTINGS_KEYS = {
   contentFontScale: "meowReportMarkdown.contentFontScale",
   tocFontScale: "meowReportMarkdown.tocFontScale",
+  hideOutlineNumbers: "meowReportMarkdown.hideOutlineNumbers",
   hideTocNumbers: "meowReportMarkdown.hideTocNumbers"
 };
 const FONT_SCALE_MIN = 0.8;
@@ -37,7 +44,10 @@ const FONT_SCALE_STEP = 0.1;
 
 const readerSettings = {
   fontScale: 1,
-  hideOutlineNumbers: false
+  showTocNumbers: true,
+  showContentNumbers: true,
+  headingFontScale: true,
+  rainbowHeadingColors: false
 };
 
 initTocDock();
@@ -125,10 +135,25 @@ function initReaderSettings() {
   fontIncrease?.addEventListener("click", () => {
     adjustFontScale(FONT_SCALE_STEP);
   });
-  hideOutlineNumbersInput?.addEventListener("change", () => {
-    readerSettings.hideOutlineNumbers = Boolean(hideOutlineNumbersInput.checked);
+  showTocNumbersInput?.addEventListener("change", () => {
+    readerSettings.showTocNumbers = Boolean(showTocNumbersInput.checked);
     saveReaderSettings();
     refreshOutlineLabels();
+  });
+  showContentNumbersInput?.addEventListener("change", () => {
+    readerSettings.showContentNumbers = Boolean(showContentNumbersInput.checked);
+    saveReaderSettings();
+    refreshOutlineLabels();
+  });
+  headingFontScaleInput?.addEventListener("change", () => {
+    readerSettings.headingFontScale = Boolean(headingFontScaleInput.checked);
+    saveReaderSettings();
+    applyReaderSettings();
+  });
+  rainbowHeadingColorsInput?.addEventListener("change", () => {
+    readerSettings.rainbowHeadingColors = Boolean(rainbowHeadingColorsInput.checked);
+    saveReaderSettings();
+    applyReaderSettings();
   });
 }
 
@@ -162,14 +187,30 @@ function loadReaderSettings() {
       "1"
   );
   readerSettings.fontScale = clampFontScale(savedFontScale);
-  readerSettings.hideOutlineNumbers =
-    localStorage.getItem(SETTINGS_KEYS.hideOutlineNumbers) === "1" ||
+
+  const legacyHideNumbers =
+    localStorage.getItem(LEGACY_SETTINGS_KEYS.hideOutlineNumbers) === "1" ||
     localStorage.getItem(LEGACY_SETTINGS_KEYS.hideTocNumbers) === "1";
+  readerSettings.showTocNumbers = readBooleanSetting(SETTINGS_KEYS.showTocNumbers, !legacyHideNumbers);
+  readerSettings.showContentNumbers = readBooleanSetting(SETTINGS_KEYS.showContentNumbers, !legacyHideNumbers);
+  readerSettings.headingFontScale = readBooleanSetting(SETTINGS_KEYS.headingFontScale, true);
+  readerSettings.rainbowHeadingColors = readBooleanSetting(SETTINGS_KEYS.rainbowHeadingColors, false);
+}
+
+function readBooleanSetting(key, defaultValue) {
+  const saved = localStorage.getItem(key);
+  if (saved === null) {
+    return defaultValue;
+  }
+  return saved === "1";
 }
 
 function saveReaderSettings() {
   localStorage.setItem(SETTINGS_KEYS.fontScale, String(readerSettings.fontScale));
-  localStorage.setItem(SETTINGS_KEYS.hideOutlineNumbers, readerSettings.hideOutlineNumbers ? "1" : "0");
+  localStorage.setItem(SETTINGS_KEYS.showTocNumbers, readerSettings.showTocNumbers ? "1" : "0");
+  localStorage.setItem(SETTINGS_KEYS.showContentNumbers, readerSettings.showContentNumbers ? "1" : "0");
+  localStorage.setItem(SETTINGS_KEYS.headingFontScale, readerSettings.headingFontScale ? "1" : "0");
+  localStorage.setItem(SETTINGS_KEYS.rainbowHeadingColors, readerSettings.rainbowHeadingColors ? "1" : "0");
 }
 
 function clampFontScale(value) {
@@ -188,14 +229,25 @@ function adjustFontScale(delta) {
 
 function applyReaderSettings() {
   document.documentElement.style.setProperty("--font-scale", String(readerSettings.fontScale));
+  document.documentElement.classList.toggle("heading-font-scale", readerSettings.headingFontScale);
+  document.documentElement.classList.toggle("rainbow-headings", readerSettings.rainbowHeadingColors);
 }
 
 function updateReaderSettingsUi() {
   if (fontValue) {
     fontValue.textContent = formatFontScaleLabel(readerSettings.fontScale);
   }
-  if (hideOutlineNumbersInput) {
-    hideOutlineNumbersInput.checked = readerSettings.hideOutlineNumbers;
+  if (showTocNumbersInput) {
+    showTocNumbersInput.checked = readerSettings.showTocNumbers;
+  }
+  if (showContentNumbersInput) {
+    showContentNumbersInput.checked = readerSettings.showContentNumbers;
+  }
+  if (headingFontScaleInput) {
+    headingFontScaleInput.checked = readerSettings.headingFontScale;
+  }
+  if (rainbowHeadingColorsInput) {
+    rainbowHeadingColorsInput.checked = readerSettings.rainbowHeadingColors;
   }
   fontDecrease?.toggleAttribute("disabled", readerSettings.fontScale <= FONT_SCALE_MIN);
   fontIncrease?.toggleAttribute("disabled", readerSettings.fontScale >= FONT_SCALE_MAX);
@@ -205,22 +257,25 @@ function formatFontScaleLabel(scale) {
   return `${Math.round(scale * 100)}%`;
 }
 
-function getOutlineLabel(outlineNumber, text) {
-  if (readerSettings.hideOutlineNumbers) {
+function getOutlineLabel(outlineNumber, text, scope) {
+  const showNumbers = scope === "toc" ? readerSettings.showTocNumbers : readerSettings.showContentNumbers;
+  if (!showNumbers) {
     return String(text || "").trim();
   }
   return formatOutlineLabel(outlineNumber, text);
 }
 
-function setOutlineLabel(element, outlineNumber, text) {
+function setOutlineLabel(element, outlineNumber, text, scope) {
   element.dataset.outlineNumber = String(outlineNumber || "");
   element.dataset.outlineText = String(text || "");
-  element.textContent = getOutlineLabel(outlineNumber, text);
+  element.dataset.outlineScope = scope;
+  element.textContent = getOutlineLabel(outlineNumber, text, scope);
 }
 
 function refreshOutlineLabels() {
   for (const node of document.querySelectorAll("[data-outline-text]")) {
-    node.textContent = getOutlineLabel(node.dataset.outlineNumber, node.dataset.outlineText);
+    const scope = node.dataset.outlineScope === "toc" ? "toc" : "content";
+    node.textContent = getOutlineLabel(node.dataset.outlineNumber, node.dataset.outlineText, scope);
   }
 }
 
@@ -500,7 +555,7 @@ function createTocLink(className, anchorId, outlineNumber, text, level = 0) {
   link.href = `#${anchorId}`;
   link.dataset.anchor = anchorId;
   link.dataset.level = String(level);
-  setOutlineLabel(link, outlineNumber, text);
+  setOutlineLabel(link, outlineNumber, text, "toc");
   return link;
 }
 
@@ -621,7 +676,7 @@ function renderFile(file) {
   section.className = "report-file";
   section.id = `file-${slugify(file.name)}`;
   const title = document.createElement("h1");
-  setOutlineLabel(title, file.outlineNumber, file.label);
+  setOutlineLabel(title, file.outlineNumber, file.label, "content");
   section.appendChild(title);
   section.appendChild(renderMarkdown(file.content, file));
   return section;
@@ -718,7 +773,7 @@ function renderMarkdown(content, file) {
       const cleanText = numberedHeading?.cleanText || stripOutlinePrefix(rawText);
       const outlineNumber = numberedHeading?.outlineNumber;
       if (outlineNumber) {
-        setOutlineLabel(h, outlineNumber, cleanText);
+        setOutlineLabel(h, outlineNumber, cleanText, "content");
       } else {
         h.textContent = cleanText;
       }

@@ -348,27 +348,60 @@ body {
   letter-spacing: -0.02em;
 }
 
-h2,
-h3,
-h4,
-h5,
-h6 {
+.report-file > h2,
+.report-file > h3,
+.report-file > h4,
+.report-file > h5,
+.report-file > h6 {
   scroll-margin-top: calc(var(--topbar-height) + 12px);
   color: var(--blue);
   margin: 24px 0 10px;
   line-height: 1.35;
-}
-
-h2 {
   font-size: calc(23px * var(--font-scale));
 }
 
-h3 {
+html.heading-font-scale .report-file > h2 {
+  font-size: calc(23px * var(--font-scale));
+}
+
+html.heading-font-scale .report-file > h3 {
   font-size: calc(19px * var(--font-scale));
 }
 
-h4 {
+html.heading-font-scale .report-file > h4 {
   font-size: calc(17px * var(--font-scale));
+}
+
+html.heading-font-scale .report-file > h5 {
+  font-size: calc(16px * var(--font-scale));
+}
+
+html.heading-font-scale .report-file > h6 {
+  font-size: calc(15px * var(--font-scale));
+}
+
+html.rainbow-headings .report-file > h1 {
+  color: #e53935;
+}
+
+html.rainbow-headings .report-file > h2 {
+  color: #f57c00;
+}
+
+html.rainbow-headings .report-file > h3 {
+  color: #f9a825;
+}
+
+html.rainbow-headings .report-file > h4 {
+  color: #43a047;
+}
+
+html.rainbow-headings .report-file > h5 {
+  color: #00838f;
+}
+
+html.rainbow-headings .report-file > h6 {
+  color: #8e24aa;
 }
 
 p {
@@ -666,6 +699,10 @@ pre code {
   font-size: 13px;
   font-weight: 600;
   color: var(--text);
+}
+
+.reader-settings-switch + .reader-settings-switch {
+  margin-top: 8px;
 }
 
 .reader-settings-switch {
