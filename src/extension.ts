@@ -9,8 +9,88 @@ type ViewerMessage =
 
 const READER_VIEW_TYPE = "meowReportMarkdown.viewer";
 const textModeUris = new Set<string>();
+const readerIntentUris = new Set<string>();
 const extensionActivatedAt = Date.now();
 const STARTUP_GRACE_MS = 1200;
+
+interface GitChangeState {
+  uri: vscode.Uri;
+}
+
+interface GitRepository {
+  state: {
+    workingTreeChanges: GitChangeState[];
+    indexChanges: GitChangeState[];
+  };
+}
+
+interface GitApi {
+  getRepository(uri: vscode.Uri): GitRepository | null;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function markReaderIntent(uri: vscode.Uri): void {
+  readerIntentUris.add(uri.toString());
+}
+
+function hasReaderIntent(uri: vscode.Uri): boolean {
+  return readerIntentUris.has(uri.toString());
+}
+
+function consumeReaderIntent(uri: vscode.Uri): boolean {
+  const key = uri.toString();
+  if (!readerIntentUris.has(key)) {
+    return false;
+  }
+  readerIntentUris.delete(key);
+  return true;
+}
+
+async function isFileInGitChanges(uri: vscode.Uri): Promise<boolean> {
+  if (uri.scheme !== "file") {
+    return false;
+  }
+
+  const gitExtension = vscode.extensions.getExtension<{ getAPI(version: 1): GitApi }>("vscode.git");
+  if (!gitExtension) {
+    return false;
+  }
+  if (!gitExtension.isActive) {
+    try {
+      await gitExtension.activate();
+    } catch {
+      return false;
+    }
+  }
+
+  const repo = gitExtension.exports.getAPI(1).getRepository(uri);
+  if (!repo) {
+    return false;
+  }
+
+  return [...repo.state.workingTreeChanges, ...repo.state.indexChanges].some(
+    (change) => change.uri.fsPath === uri.fsPath
+  );
+}
+
+function findReaderTab(uri: vscode.Uri): vscode.Tab | undefined {
+  const uriStr = uri.toString();
+  for (const group of vscode.window.tabGroups.all) {
+    for (const tab of group.tabs) {
+      if (
+        tab.input instanceof vscode.TabInputCustom &&
+        tab.input.viewType === READER_VIEW_TYPE &&
+        tab.input.uri.toString() === uriStr
+      ) {
+        return tab;
+      }
+    }
+  }
+  return undefined;
+}
 
 async function ensureTextDocumentReady(uri: vscode.Uri): Promise<vscode.TextDocument> {
   const document = await vscode.workspace.openTextDocument(uri);
@@ -69,11 +149,16 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       textModeUris.delete(target.toString());
+      markReaderIntent(target);
       await openInReaderMode(target);
     })
   );
 
   setupAutoOpenReaderMode(context);
+
+  setTimeout(() => {
+    void reconcileRestoredReaderTabs();
+  }, 600);
 }
 
 function isAutoOpenEnabled(): boolean {
@@ -91,8 +176,147 @@ function hasReaderModeTab(uri: vscode.Uri): boolean {
   );
 }
 
+function tabLabelText(tab: vscode.Tab): string {
+  const label = tab.label;
+  if (typeof label === "string") {
+    return label;
+  }
+  if (label && typeof label === "object" && "label" in label) {
+    return String((label as { label: string }).label);
+  }
+  return "";
+}
+
+function uriMatchesDiffSide(diffUri: vscode.Uri, target: vscode.Uri): boolean {
+  if (diffUri.toString() === target.toString()) {
+    return true;
+  }
+  if (diffUri.scheme === "file" && target.scheme === "file") {
+    return diffUri.fsPath === target.fsPath;
+  }
+  if (diffUri.scheme === "git" && target.scheme === "file") {
+    return diffUri.fsPath === target.fsPath || diffUri.path.endsWith(target.fsPath);
+  }
+  return false;
+}
+
+function isUriInDiffEditor(uri: vscode.Uri): boolean {
+  return vscode.window.tabGroups.all.some((group) =>
+    group.tabs.some((tab) => {
+      const input = tab.input;
+      if (input instanceof vscode.TabInputTextDiff) {
+        return uriMatchesDiffSide(input.original, uri) || uriMatchesDiffSide(input.modified, uri);
+      }
+      return false;
+    })
+  );
+}
+
+function isLikelyGitChangeTab(tab: vscode.Tab, uri: vscode.Uri): boolean {
+  if (isUriInDiffEditor(uri)) {
+    return true;
+  }
+
+  const label = tabLabelText(tab);
+  if (/Working Tree|\(Index\)|\(HEAD\)|↔| — /.test(label)) {
+    return true;
+  }
+
+  return false;
+}
+
+function eventOpenedDiffForUri(opened: readonly vscode.Tab[], uri: vscode.Uri): boolean {
+  return opened.some((tab) => {
+    const input = tab.input;
+    if (!(input instanceof vscode.TabInputTextDiff)) {
+      return false;
+    }
+    return uriMatchesDiffSide(input.modified, uri) || uriMatchesDiffSide(input.original, uri);
+  });
+}
+
+function shouldSuppressReaderMode(uri: vscode.Uri, tab?: vscode.Tab): boolean {
+  if (textModeUris.has(uri.toString())) {
+    return true;
+  }
+  if (isUriInDiffEditor(uri)) {
+    return true;
+  }
+  if (tab && isLikelyGitChangeTab(tab, uri)) {
+    return true;
+  }
+  return false;
+}
+
+async function shouldSuppressReaderModeAsync(uri: vscode.Uri, tab?: vscode.Tab): Promise<boolean> {
+  if (shouldSuppressReaderMode(uri, tab)) {
+    return true;
+  }
+  if (tab?.isPreview && (await isFileInGitChanges(uri))) {
+    return true;
+  }
+  return false;
+}
+
+async function revertToTextOrGitDiff(uri: vscode.Uri, tab?: vscode.Tab): Promise<void> {
+  textModeUris.add(uri.toString());
+
+  if (tab) {
+    try {
+      await vscode.window.tabGroups.close(tab);
+    } catch {
+      // Ignore close failures.
+    }
+  }
+
+  try {
+    await vscode.commands.executeCommand("git.openChange", uri);
+    return;
+  } catch {
+    // Fall back to plain text editor when git command is unavailable.
+  }
+
+  await vscode.commands.executeCommand("vscode.openWith", uri, "default");
+}
+
+async function handleReaderTabOpened(uri: vscode.Uri, tab: vscode.Tab): Promise<void> {
+  if (consumeReaderIntent(uri)) {
+    return;
+  }
+  if (await shouldSuppressReaderModeAsync(uri, tab)) {
+    await revertToTextOrGitDiff(uri, tab);
+  }
+}
+
+async function reconcileRestoredReaderTabs(): Promise<void> {
+  for (const group of vscode.window.tabGroups.all) {
+    for (const tab of group.tabs) {
+      if (!(tab.input instanceof vscode.TabInputCustom)) {
+        continue;
+      }
+      if (tab.input.viewType !== READER_VIEW_TYPE) {
+        continue;
+      }
+
+      const uri = tab.input.uri;
+      if (!uri.fsPath.toLowerCase().endsWith(".md")) {
+        continue;
+      }
+      if (hasReaderIntent(uri)) {
+        continue;
+      }
+      if (await shouldSuppressReaderModeAsync(uri, tab)) {
+        await revertToTextOrGitDiff(uri, tab);
+      }
+    }
+  }
+}
+
 async function maybeAutoOpenReaderMode(uri: vscode.Uri): Promise<void> {
   if (!isAutoOpenEnabled()) {
+    return;
+  }
+  if (uri.scheme !== "file") {
     return;
   }
   if (!uri.fsPath.toLowerCase().endsWith(".md")) {
@@ -104,15 +328,43 @@ async function maybeAutoOpenReaderMode(uri: vscode.Uri): Promise<void> {
   if (hasReaderModeTab(uri)) {
     return;
   }
+  if (isUriInDiffEditor(uri)) {
+    textModeUris.add(uri.toString());
+    return;
+  }
 
   const startupWait = Math.max(0, STARTUP_GRACE_MS - (Date.now() - extensionActivatedAt));
   if (startupWait > 0) {
-    await new Promise((resolve) => setTimeout(resolve, startupWait));
+    await sleep(startupWait);
   }
 
+  for (const delay of [0, 200, 400]) {
+    if (delay > 0) {
+      await sleep(delay);
+    }
+    if (isUriInDiffEditor(uri)) {
+      textModeUris.add(uri.toString());
+      return;
+    }
+    if (await isFileInGitChanges(uri)) {
+      const tab = vscode.window.tabGroups.all
+        .flatMap((group) => group.tabs)
+        .find(
+          (candidate) =>
+            candidate.input instanceof vscode.TabInputText && candidate.input.uri.toString() === uri.toString()
+        );
+      if (tab?.isPreview) {
+        textModeUris.add(uri.toString());
+        return;
+      }
+    }
+  }
+
+  markReaderIntent(uri);
   try {
     await openInReaderMode(uri);
   } catch {
+    readerIntentUris.delete(uri.toString());
     // Ignore auto-open failures; user can reopen via Open With or explorer context menu.
   }
 }
@@ -138,6 +390,21 @@ function setupAutoOpenReaderMode(context: vscode.ExtensionContext): void {
       }
 
       for (const opened of event.opened) {
+        if (opened.input instanceof vscode.TabInputTextDiff) {
+          textModeUris.add(opened.input.modified.toString());
+          continue;
+        }
+
+        if (opened.input instanceof vscode.TabInputCustom && opened.input.viewType === READER_VIEW_TYPE) {
+          const uri = opened.input.uri;
+          if (uri.fsPath.toLowerCase().endsWith(".md")) {
+            setTimeout(() => {
+              void handleReaderTabOpened(uri, opened);
+            }, 0);
+          }
+          continue;
+        }
+
         if (!(opened.input instanceof vscode.TabInputText)) {
           continue;
         }
@@ -157,6 +424,24 @@ function setupAutoOpenReaderMode(context: vscode.ExtensionContext): void {
           continue;
         }
 
+        if (eventOpenedDiffForUri(event.opened, uri) || isLikelyGitChangeTab(opened, uri)) {
+          textModeUris.add(uri.toString());
+          continue;
+        }
+
+        if (opened.isPreview) {
+          void isFileInGitChanges(uri).then((inGitChanges) => {
+            if (inGitChanges) {
+              textModeUris.add(uri.toString());
+              return;
+            }
+            setTimeout(() => {
+              void maybeAutoOpenReaderMode(uri);
+            }, 400);
+          });
+          continue;
+        }
+
         setTimeout(() => {
           void maybeAutoOpenReaderMode(uri);
         }, 400);
@@ -173,6 +458,21 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     webviewPanel: vscode.WebviewPanel,
     _token: vscode.CancellationToken
   ): Promise<void> {
+    const uri = document.uri;
+    const tab = findReaderTab(uri);
+
+    if (!hasReaderIntent(uri)) {
+      if (await shouldSuppressReaderModeAsync(uri, tab)) {
+        textModeUris.add(uri.toString());
+        setTimeout(() => {
+          void revertToTextOrGitDiff(uri, tab);
+        }, 0);
+        return;
+      }
+    } else {
+      consumeReaderIntent(uri);
+    }
+
     webviewPanel.webview.options = {
       enableScripts: true,
       localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, "media")]
