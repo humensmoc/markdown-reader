@@ -22,11 +22,6 @@
         "title": "Open with Meow Report Markdown Viewer"
       }
     ],
-    "configurationDefaults": {
-      "workbench.editorAssociations": {
-        "*.md": "meowReportMarkdown.viewer"
-      }
-    },
     "customEditors": [
       {
         "viewType": "meowReportMarkdown.viewer",

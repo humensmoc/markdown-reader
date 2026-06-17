@@ -144,7 +144,6 @@ function renderMarkdown(content, file) {
   let codeLines = [];
   let tableRows = [];
   let headingIndex = 0;
-  let sourceMode = false;
 
   function flushParagraph() {
     if (!paragraph.length) return;
@@ -186,21 +185,17 @@ function renderMarkdown(content, file) {
       tableRows.push(parseTableRow(line));
       continue;
     }
-    if (isSourceHeading(line)) {
+    const sourceLine = parseSourceLine(line);
+    if (sourceLine) {
       flushParagraph();
       flushTable();
-      const sourceTitle = document.createElement("p");
-      sourceTitle.className = "sources-title";
-      appendInlineMarkdown(sourceTitle, line.replace(/^\*\*|\*\*$/g, ""), context);
-      fragment.appendChild(sourceTitle);
-      sourceMode = true;
+      fragment.appendChild(renderSourceLine(sourceLine, context));
       continue;
     }
     const heading = /^(#{1,6})\s+(.+?)\s*$/.exec(line);
     if (heading) {
       flushParagraph();
       flushTable();
-      sourceMode = false;
       const level = Math.min(heading[1].length + 1, 6);
       const h = document.createElement(`h${level}`);
       const numberedHeading = file.numberedHeadings?.[headingIndex];
@@ -223,7 +218,7 @@ function renderMarkdown(content, file) {
     if (unordered || ordered) {
       flushParagraph();
       flushTable();
-      const item = document.createElement(sourceMode && ordered ? "div" : "p");
+      const item = document.createElement("p");
       item.className = `list-line ${ordered ? "ordered-line" : "unordered-line"}`;
       const marker = document.createElement("span");
       marker.className = "list-marker";
@@ -232,11 +227,6 @@ function renderMarkdown(content, file) {
       body.className = "list-body";
       appendInlineMarkdown(body, ordered ? ordered[2].trim() : unordered[1].trim(), context);
       item.append(marker, body);
-      if (sourceMode && ordered) {
-        item.classList.add("source-line");
-        item.id = makeSourceId(context.fileKey, ordered[1]);
-        item.dataset.sourceNumber = ordered[1];
-      }
       fragment.appendChild(item);
       continue;
     }
@@ -272,8 +262,35 @@ function isTableRow(line) {
   return trimmed.startsWith("|") && trimmed.endsWith("|") && (trimmed.match(/\|/g) || []).length >= 2;
 }
 
-function isSourceHeading(line) {
-  return /^\s*(?:\*\*)?Sources:?(?:\*\*)?\s*$/i.test(String(line || "").trim());
+function parseSourceLine(line) {
+  const match = /^\[cite[\s-]source\]\s*(\d+)\.\s+(.+)$/i.exec(String(line || "").trim());
+  if (!match) {
+    return null;
+  }
+  return {
+    number: match[1],
+    body: match[2].trim()
+  };
+}
+
+function renderSourceLine(sourceLine, context) {
+  const item = document.createElement("div");
+  item.className = "list-line ordered-line source-line";
+  item.id = makeSourceId(context.fileKey, sourceLine.number);
+  item.dataset.sourceNumber = sourceLine.number;
+
+  const marker = document.createElement("span");
+  marker.className = "list-marker";
+  marker.textContent = `${sourceLine.number}.`;
+
+  const body = document.createElement("span");
+  body.className = "list-body";
+  appendInlineMarkdown(body, sourceLine.body, {
+    ...context,
+    disableCitations: true
+  });
+  item.append(marker, body);
+  return item;
 }
 
 function stripOutlinePrefix(text) {
@@ -358,7 +375,7 @@ function renderInlineMarkdown(text, context = {}) {
     appendInlineText(fragment, value.slice(cursor, linkStart));
 
     const cite = /^\[cite:\s*([0-9,\s-]+)\]/i.exec(value.slice(linkStart));
-    if (cite) {
+    if (cite && !context.disableCitations) {
       fragment.appendChild(renderCitationGroup(cite[1], context));
       cursor = linkStart + cite[0].length;
       continue;
@@ -467,8 +484,7 @@ function renderCitationGroup(rawNumbers, context) {
     .map((value) => value.trim())
     .filter(Boolean);
 
-  group.appendChild(document.createTextNode("[cite: "));
-  numbers.forEach((number, index) => {
+  numbers.forEach((number) => {
     const ref = document.createElement("button");
     ref.type = "button";
     ref.className = "cite-ref";
@@ -477,9 +493,7 @@ function renderCitationGroup(rawNumbers, context) {
     ref.dataset.sourceTarget = makeSourceId(context.fileKey || "report", number);
     citeRefSerial += 1;
     group.appendChild(ref);
-    if (index < numbers.length - 1) group.appendChild(document.createTextNode(", "));
   });
-  group.appendChild(document.createTextNode("]"));
   return group;
 }
 

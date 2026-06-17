@@ -10,6 +10,28 @@ type ViewerMessage =
 const READER_VIEW_TYPE = "meowReportMarkdown.viewer";
 const textModeUris = new Set<string>();
 
+async function openInReaderMode(uri: vscode.Uri): Promise<void> {
+  // Cursor may fail CustomTextEditor open if the backing TextDocument is not
+  // initialized yet ("Assertion Failed: Argument is `undefined` or `null`").
+  await vscode.workspace.openTextDocument(uri);
+
+  const delays = [0, 120, 300];
+  let lastError: unknown;
+  for (const delayMs of delays) {
+    if (delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    try {
+      await vscode.commands.executeCommand("vscode.openWith", uri, READER_VIEW_TYPE);
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError;
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   const provider = new ReportMarkdownEditorProvider(context);
 
@@ -28,7 +50,7 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       textModeUris.delete(target.toString());
-      await vscode.commands.executeCommand("vscode.openWith", target, READER_VIEW_TYPE);
+      await openInReaderMode(target);
     })
   );
 
@@ -65,7 +87,7 @@ async function maybeAutoOpenReaderMode(uri: vscode.Uri): Promise<void> {
   }
 
   try {
-    await vscode.commands.executeCommand("vscode.openWith", uri, READER_VIEW_TYPE);
+    await openInReaderMode(uri);
   } catch {
     // Ignore auto-open failures; user can reopen via Open With or explorer context menu.
   }
@@ -113,27 +135,8 @@ function setupAutoOpenReaderMode(context: vscode.ExtensionContext): void {
 
         setTimeout(() => {
           void maybeAutoOpenReaderMode(uri);
-        }, 80);
+        }, 300);
       }
-    })
-  );
-
-  for (const document of vscode.workspace.textDocuments) {
-    if (document.uri.fsPath.toLowerCase().endsWith(".md")) {
-      setTimeout(() => {
-        void maybeAutoOpenReaderMode(document.uri);
-      }, 80);
-    }
-  }
-
-  context.subscriptions.push(
-    vscode.workspace.onDidOpenTextDocument((document) => {
-      if (!document.uri.fsPath.toLowerCase().endsWith(".md")) {
-        return;
-      }
-      setTimeout(() => {
-        void maybeAutoOpenReaderMode(document.uri);
-      }, 80);
     })
   );
 }
@@ -151,15 +154,16 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, "media")]
     };
 
-    webviewPanel.webview.html = this.getHtml(webviewPanel.webview);
-
     let disposed = false;
     let ready = false;
     let updateTimer: ReturnType<typeof setTimeout> | undefined;
     let pendingUpdate = false;
 
     const update = async (): Promise<void> => {
-      if (disposed || !ready) {
+      if (disposed) {
+        return;
+      }
+      if (!ready) {
         pendingUpdate = true;
         return;
       }
@@ -210,6 +214,10 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       if (message.type === "ready") {
         ready = true;
         await update();
+        if (pendingUpdate) {
+          pendingUpdate = false;
+          await update();
+        }
         return;
       }
 
@@ -244,6 +252,9 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       changeSub.dispose();
       saveSub.dispose();
     });
+
+    // Register listeners before loading HTML so the initial "ready" message is not lost.
+    webviewPanel.webview.html = this.getHtml(webviewPanel.webview);
   }
 
   private async openExternal(href: string): Promise<void> {
@@ -306,9 +317,14 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
   }
 
   private getHtml(webview: vscode.Webview): string {
-    const cssUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "report.css"));
-    const jsUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "reportViewer.js"));
-    const nonce = String(Date.now());
+    const cacheKey = String(Date.now());
+    const cssUri = webview
+      .asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "report.css"))
+      .with({ query: `v=${cacheKey}` });
+    const jsUri = webview
+      .asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "reportViewer.js"))
+      .with({ query: `v=${cacheKey}` });
+    const nonce = cacheKey;
 
     return `<!doctype html>
 <html lang="zh-CN">
@@ -340,25 +356,17 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     </button>
     <div id="readerSettingsPanel" class="reader-settings-panel" hidden role="dialog" aria-label="阅读设置">
       <section class="reader-settings-group">
-        <h2 class="reader-settings-label">正文字号</h2>
+        <h2 class="reader-settings-label">字号</h2>
         <div class="reader-settings-control">
-          <button id="contentFontDecrease" type="button" aria-label="缩小正文字号">−</button>
-          <span id="contentFontValue" class="reader-settings-value">100%</span>
-          <button id="contentFontIncrease" type="button" aria-label="放大正文字号">+</button>
+          <button id="fontDecrease" type="button" aria-label="缩小字号">−</button>
+          <span id="fontValue" class="reader-settings-value">100%</span>
+          <button id="fontIncrease" type="button" aria-label="放大字号">+</button>
         </div>
       </section>
       <section class="reader-settings-group">
-        <h2 class="reader-settings-label">目录字号</h2>
-        <div class="reader-settings-control">
-          <button id="tocFontDecrease" type="button" aria-label="缩小目录字号">−</button>
-          <span id="tocFontValue" class="reader-settings-value">100%</span>
-          <button id="tocFontIncrease" type="button" aria-label="放大目录字号">+</button>
-        </div>
-      </section>
-      <section class="reader-settings-group">
-        <label class="reader-settings-switch" for="hideTocNumbers">
-          <span>隐藏目录编号</span>
-          <input id="hideTocNumbers" type="checkbox" />
+        <label class="reader-settings-switch" for="hideOutlineNumbers">
+          <span>隐藏标题编号</span>
+          <input id="hideOutlineNumbers" type="checkbox" />
           <span class="reader-settings-switch-ui" aria-hidden="true"></span>
         </label>
       </section>

@@ -5,7 +5,7 @@
 - 左侧 TOC，按当前文件标题生成目录
 - 标题自动编号
 - 表格、代码块、粗体、斜体、行内代码渲染
-- `[cite: n]` 引用跳转与返回原文
+- `[cite: n]` 引用跳转与返回原文（正文只显示蓝色数字；来源行以 `[cite source]` 标记，见 [格式规范](docs/markdown_format_spec.md)）
 
 ## 1. 环境要求
 
@@ -36,16 +36,7 @@ npm run compile
 
 ## 3. 打开 Markdown 阅读视图
 
-安装插件后，`.md` 文件会默认以 `Meow Report Markdown Viewer` 打开。插件通过以下方式生效：
-
-- `customEditors.priority = default`
-- `configurationDefaults` 写入 `workbench.editorAssociations`
-
-如果未自动进入阅读视图，可在设置中确认：
-
-```json
-"meowReportMarkdown.autoOpenReaderMode": true
-```
+安装插件后，`.md` 文件会在打开后自动切换到 `Meow Report Markdown Viewer`（可通过 `meowReportMarkdown.autoOpenReaderMode` 关闭）。
 
 其他打开方式：
 
@@ -84,6 +75,10 @@ npm run compile
 
 ### Q2: 为什么点击 `.md` 还是默认文本编辑器？
 
+- 确认 `meowReportMarkdown.autoOpenReaderMode` 为 `true`（默认开启）
 - 确认当前窗口已加载本扩展
-- 检查用户或工作区 `workbench.editorAssociations` 是否覆盖了插件默认值
 - 使用 `Reopen Editor With...` 手动选择阅读视图
+
+### Q3: 打开 `.md` 时报 `Assertion Failed: Argument is undefined or null`？
+
+这是 Cursor 在 Custom Editor 打开前 TextDocument 尚未就绪时的已知问题。插件会先加载文本模型再切换到阅读视图；若仍失败，请先用 **Open With → Text Editor** 打开一次，再执行 **Open with Meow Report Markdown Viewer**。

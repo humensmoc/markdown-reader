@@ -2,8 +2,7 @@
   color-scheme: light dark;
   --topbar-height: 38px;
   --toc-width: 280px;
-  --content-font-scale: 1;
-  --toc-font-scale: 1;
+  --font-scale: 1;
   --bg: var(--vscode-editor-background);
   --bg-grid: color-mix(in srgb, var(--vscode-editor-foreground) 6%, transparent);
   --paper: var(--vscode-editor-background);
@@ -48,7 +47,7 @@
 }
 
 html {
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
 }
 
 body {
@@ -110,7 +109,7 @@ body {
   margin: 0;
   padding: 28px 40px max(88px, 55vh);
   min-height: calc(100vh - var(--topbar-height));
-  font-size: calc(var(--vscode-font-size) * var(--content-font-scale));
+  font-size: calc(var(--vscode-font-size) * var(--font-scale));
 }
 
 .layout-toc-collapsed .report-content {
@@ -160,7 +159,7 @@ body {
   background: var(--paper-strong);
   color: var(--blue);
   font: inherit;
-  font-size: calc(12px * var(--toc-font-scale));
+  font-size: calc(12px * var(--font-scale));
   font-weight: 700;
   line-height: 1;
   padding: 8px 12px;
@@ -186,7 +185,7 @@ body {
   flex: 1 1 auto;
   overflow: auto;
   padding: 10px 8px 14px 4px;
-  font-size: calc(12px * var(--toc-font-scale));
+  font-size: calc(12px * var(--font-scale));
   scrollbar-width: none;
 }
 
@@ -343,7 +342,7 @@ body {
 }
 
 .report-file > h1 {
-  font-size: calc(28px * var(--content-font-scale));
+  font-size: calc(28px * var(--font-scale));
   margin: 0 0 22px;
   color: var(--text);
   letter-spacing: -0.02em;
@@ -361,15 +360,15 @@ h6 {
 }
 
 h2 {
-  font-size: calc(23px * var(--content-font-scale));
+  font-size: calc(23px * var(--font-scale));
 }
 
 h3 {
-  font-size: calc(19px * var(--content-font-scale));
+  font-size: calc(19px * var(--font-scale));
 }
 
 h4 {
-  font-size: calc(17px * var(--content-font-scale));
+  font-size: calc(17px * var(--font-scale));
 }
 
 p {
@@ -441,6 +440,9 @@ p {
 }
 
 .cite-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
   white-space: nowrap;
 }
 
@@ -454,6 +456,8 @@ p {
   cursor: pointer;
   font: inherit;
   line-height: 1.25;
+  scroll-margin-top: calc(var(--topbar-height) + 12px);
+  scroll-margin-bottom: 24px;
 }
 
 .cite-ref:hover,
@@ -516,7 +520,7 @@ pre code {
   width: 100%;
   min-width: 760px;
   border-collapse: collapse;
-  font-size: calc(13px * var(--content-font-scale));
+  font-size: calc(13px * var(--font-scale));
   line-height: 1.55;
 }
 

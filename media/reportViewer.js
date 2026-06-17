@@ -9,13 +9,10 @@ const toc = document.getElementById("toc");
 const reportContent = document.getElementById("reportContent");
 const readerSettingsToggle = document.getElementById("readerSettingsToggle");
 const readerSettingsPanel = document.getElementById("readerSettingsPanel");
-const contentFontDecrease = document.getElementById("contentFontDecrease");
-const contentFontIncrease = document.getElementById("contentFontIncrease");
-const contentFontValue = document.getElementById("contentFontValue");
-const tocFontDecrease = document.getElementById("tocFontDecrease");
-const tocFontIncrease = document.getElementById("tocFontIncrease");
-const tocFontValue = document.getElementById("tocFontValue");
-const hideTocNumbersInput = document.getElementById("hideTocNumbers");
+const fontDecrease = document.getElementById("fontDecrease");
+const fontIncrease = document.getElementById("fontIncrease");
+const fontValue = document.getElementById("fontValue");
+const hideOutlineNumbersInput = document.getElementById("hideOutlineNumbers");
 let activeCitation = null;
 let citeRefSerial = 0;
 let citeFlashEndTimer = null;
@@ -26,6 +23,10 @@ let tocScrollSpyTimer = null;
 let tocScrollSpyResumeTimer = null;
 
 const SETTINGS_KEYS = {
+  fontScale: "meowReportMarkdown.fontScale",
+  hideOutlineNumbers: "meowReportMarkdown.hideOutlineNumbers"
+};
+const LEGACY_SETTINGS_KEYS = {
   contentFontScale: "meowReportMarkdown.contentFontScale",
   tocFontScale: "meowReportMarkdown.tocFontScale",
   hideTocNumbers: "meowReportMarkdown.hideTocNumbers"
@@ -35,9 +36,8 @@ const FONT_SCALE_MAX = 1.5;
 const FONT_SCALE_STEP = 0.1;
 
 const readerSettings = {
-  contentFontScale: 1,
-  tocFontScale: 1,
-  hideTocNumbers: false
+  fontScale: 1,
+  hideOutlineNumbers: false
 };
 
 initTocDock();
@@ -56,7 +56,17 @@ document.addEventListener("click", handleReportClick);
 document.addEventListener("click", handleReaderSettingsOutsideClick);
 
 if (vscode) {
+  postReadySignal();
+}
+
+function postReadySignal() {
   vscode.postMessage({ type: "ready" });
+  window.requestAnimationFrame(() => {
+    vscode.postMessage({ type: "ready" });
+  });
+  window.setTimeout(() => {
+    vscode.postMessage({ type: "ready" });
+  }, 100);
 }
 
 function initTocDock() {
@@ -109,22 +119,16 @@ function initReaderSettings() {
     setReaderSettingsOpen(!isReaderSettingsOpen());
   });
 
-  contentFontDecrease?.addEventListener("click", () => {
-    adjustFontScale("content", -FONT_SCALE_STEP);
+  fontDecrease?.addEventListener("click", () => {
+    adjustFontScale(-FONT_SCALE_STEP);
   });
-  contentFontIncrease?.addEventListener("click", () => {
-    adjustFontScale("content", FONT_SCALE_STEP);
+  fontIncrease?.addEventListener("click", () => {
+    adjustFontScale(FONT_SCALE_STEP);
   });
-  tocFontDecrease?.addEventListener("click", () => {
-    adjustFontScale("toc", -FONT_SCALE_STEP);
-  });
-  tocFontIncrease?.addEventListener("click", () => {
-    adjustFontScale("toc", FONT_SCALE_STEP);
-  });
-  hideTocNumbersInput?.addEventListener("change", () => {
-    readerSettings.hideTocNumbers = Boolean(hideTocNumbersInput.checked);
+  hideOutlineNumbersInput?.addEventListener("change", () => {
+    readerSettings.hideOutlineNumbers = Boolean(hideOutlineNumbersInput.checked);
     saveReaderSettings();
-    refreshTocLabels();
+    refreshOutlineLabels();
   });
 }
 
@@ -151,17 +155,21 @@ function handleReaderSettingsOutsideClick(event) {
 }
 
 function loadReaderSettings() {
-  const savedContentScale = Number.parseFloat(localStorage.getItem(SETTINGS_KEYS.contentFontScale) || "1");
-  const savedTocScale = Number.parseFloat(localStorage.getItem(SETTINGS_KEYS.tocFontScale) || "1");
-  readerSettings.contentFontScale = clampFontScale(savedContentScale);
-  readerSettings.tocFontScale = clampFontScale(savedTocScale);
-  readerSettings.hideTocNumbers = localStorage.getItem(SETTINGS_KEYS.hideTocNumbers) === "1";
+  const savedFontScale = Number.parseFloat(
+    localStorage.getItem(SETTINGS_KEYS.fontScale) ||
+      localStorage.getItem(LEGACY_SETTINGS_KEYS.contentFontScale) ||
+      localStorage.getItem(LEGACY_SETTINGS_KEYS.tocFontScale) ||
+      "1"
+  );
+  readerSettings.fontScale = clampFontScale(savedFontScale);
+  readerSettings.hideOutlineNumbers =
+    localStorage.getItem(SETTINGS_KEYS.hideOutlineNumbers) === "1" ||
+    localStorage.getItem(LEGACY_SETTINGS_KEYS.hideTocNumbers) === "1";
 }
 
 function saveReaderSettings() {
-  localStorage.setItem(SETTINGS_KEYS.contentFontScale, String(readerSettings.contentFontScale));
-  localStorage.setItem(SETTINGS_KEYS.tocFontScale, String(readerSettings.tocFontScale));
-  localStorage.setItem(SETTINGS_KEYS.hideTocNumbers, readerSettings.hideTocNumbers ? "1" : "0");
+  localStorage.setItem(SETTINGS_KEYS.fontScale, String(readerSettings.fontScale));
+  localStorage.setItem(SETTINGS_KEYS.hideOutlineNumbers, readerSettings.hideOutlineNumbers ? "1" : "0");
 }
 
 function clampFontScale(value) {
@@ -171,52 +179,48 @@ function clampFontScale(value) {
   return Math.min(FONT_SCALE_MAX, Math.max(FONT_SCALE_MIN, Math.round(value * 10) / 10));
 }
 
-function adjustFontScale(target, delta) {
-  const key = target === "toc" ? "tocFontScale" : "contentFontScale";
-  readerSettings[key] = clampFontScale(readerSettings[key] + delta);
+function adjustFontScale(delta) {
+  readerSettings.fontScale = clampFontScale(readerSettings.fontScale + delta);
   saveReaderSettings();
   applyReaderSettings();
   updateReaderSettingsUi();
 }
 
 function applyReaderSettings() {
-  document.documentElement.style.setProperty("--content-font-scale", String(readerSettings.contentFontScale));
-  document.documentElement.style.setProperty("--toc-font-scale", String(readerSettings.tocFontScale));
+  document.documentElement.style.setProperty("--font-scale", String(readerSettings.fontScale));
 }
 
 function updateReaderSettingsUi() {
-  if (contentFontValue) {
-    contentFontValue.textContent = formatFontScaleLabel(readerSettings.contentFontScale);
+  if (fontValue) {
+    fontValue.textContent = formatFontScaleLabel(readerSettings.fontScale);
   }
-  if (tocFontValue) {
-    tocFontValue.textContent = formatFontScaleLabel(readerSettings.tocFontScale);
+  if (hideOutlineNumbersInput) {
+    hideOutlineNumbersInput.checked = readerSettings.hideOutlineNumbers;
   }
-  if (hideTocNumbersInput) {
-    hideTocNumbersInput.checked = readerSettings.hideTocNumbers;
-  }
-  contentFontDecrease?.toggleAttribute("disabled", readerSettings.contentFontScale <= FONT_SCALE_MIN);
-  contentFontIncrease?.toggleAttribute("disabled", readerSettings.contentFontScale >= FONT_SCALE_MAX);
-  tocFontDecrease?.toggleAttribute("disabled", readerSettings.tocFontScale <= FONT_SCALE_MIN);
-  tocFontIncrease?.toggleAttribute("disabled", readerSettings.tocFontScale >= FONT_SCALE_MAX);
+  fontDecrease?.toggleAttribute("disabled", readerSettings.fontScale <= FONT_SCALE_MIN);
+  fontIncrease?.toggleAttribute("disabled", readerSettings.fontScale >= FONT_SCALE_MAX);
 }
 
 function formatFontScaleLabel(scale) {
   return `${Math.round(scale * 100)}%`;
 }
 
-function getTocLinkLabel(outlineNumber, text) {
-  if (readerSettings.hideTocNumbers) {
+function getOutlineLabel(outlineNumber, text) {
+  if (readerSettings.hideOutlineNumbers) {
     return String(text || "").trim();
   }
   return formatOutlineLabel(outlineNumber, text);
 }
 
-function refreshTocLabels() {
-  if (!toc) {
-    return;
-  }
-  for (const link of toc.querySelectorAll("a[data-outline-text]")) {
-    link.textContent = getTocLinkLabel(link.dataset.outlineNumber, link.dataset.outlineText);
+function setOutlineLabel(element, outlineNumber, text) {
+  element.dataset.outlineNumber = String(outlineNumber || "");
+  element.dataset.outlineText = String(text || "");
+  element.textContent = getOutlineLabel(outlineNumber, text);
+}
+
+function refreshOutlineLabels() {
+  for (const node of document.querySelectorAll("[data-outline-text]")) {
+    node.textContent = getOutlineLabel(node.dataset.outlineNumber, node.dataset.outlineText);
   }
 }
 
@@ -250,21 +254,12 @@ function getPageScroller() {
 }
 
 function getScrollTop() {
-  return window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || getPageScroller().scrollTop || 0;
+  const scroller = getPageScroller();
+  return scroller.scrollTop || window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
 }
 
-function getMaxScrollTop() {
-  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
-  const scrollHeight = Math.max(
-    document.body?.scrollHeight || 0,
-    document.documentElement?.scrollHeight || 0,
-    getPageScroller().scrollHeight || 0
-  );
-  return Math.max(0, scrollHeight - viewportHeight);
-}
-
-function scrollPageTo(top, behavior = "smooth") {
-  const nextTop = Math.max(0, Math.min(top, getMaxScrollTop()));
+function setScrollTop(top, behavior = "smooth") {
+  const nextTop = Math.max(0, top);
   window.scrollTo({ top: nextTop, left: 0, behavior });
 }
 
@@ -295,7 +290,7 @@ function scrollElementToViewport(target, { block = "center", behavior = "smooth"
     }
   }
 
-  scrollPageTo(nextTop, behavior);
+  setScrollTop(nextTop, behavior);
 }
 
 function updateActiveToc() {
@@ -505,9 +500,7 @@ function createTocLink(className, anchorId, outlineNumber, text, level = 0) {
   link.href = `#${anchorId}`;
   link.dataset.anchor = anchorId;
   link.dataset.level = String(level);
-  link.dataset.outlineNumber = String(outlineNumber || "");
-  link.dataset.outlineText = String(text || "");
-  link.textContent = getTocLinkLabel(outlineNumber, text);
+  setOutlineLabel(link, outlineNumber, text);
   return link;
 }
 
@@ -628,7 +621,7 @@ function renderFile(file) {
   section.className = "report-file";
   section.id = `file-${slugify(file.name)}`;
   const title = document.createElement("h1");
-  title.textContent = formatOutlineLabel(file.outlineNumber, file.label);
+  setOutlineLabel(title, file.outlineNumber, file.label);
   section.appendChild(title);
   section.appendChild(renderMarkdown(file.content, file));
   return section;
@@ -666,7 +659,6 @@ function renderMarkdown(content, file) {
   let codeLines = [];
   let tableRows = [];
   let headingIndex = 0;
-  let sourceMode = false;
 
   function flushParagraph() {
     if (!paragraph.length) return;
@@ -708,28 +700,28 @@ function renderMarkdown(content, file) {
       tableRows.push(parseTableRow(line));
       continue;
     }
-    if (isSourceHeading(line)) {
+    const sourceLine = parseSourceLine(line);
+    if (sourceLine) {
       flushParagraph();
       flushTable();
-      const sourceTitle = document.createElement("p");
-      sourceTitle.className = "sources-title";
-      appendInlineMarkdown(sourceTitle, line.replace(/^\*\*|\*\*$/g, ""), context);
-      fragment.appendChild(sourceTitle);
-      sourceMode = true;
+      fragment.appendChild(renderSourceLine(sourceLine, context));
       continue;
     }
     const heading = /^(#{1,6})\s+(.+?)\s*$/.exec(line);
     if (heading) {
       flushParagraph();
       flushTable();
-      sourceMode = false;
       const level = Math.min(heading[1].length + 1, 6);
       const h = document.createElement(`h${level}`);
       const numberedHeading = file.numberedHeadings?.[headingIndex];
       const rawText = heading[2].replace(/\s+#*$/, "").trim();
       const cleanText = numberedHeading?.cleanText || stripOutlinePrefix(rawText);
       const outlineNumber = numberedHeading?.outlineNumber;
-      h.textContent = outlineNumber ? formatOutlineLabel(outlineNumber, cleanText) : cleanText;
+      if (outlineNumber) {
+        setOutlineLabel(h, outlineNumber, cleanText);
+      } else {
+        h.textContent = cleanText;
+      }
       h.id = numberedHeading?.anchor || makeFallbackAnchor(file.name, headingIndex, cleanText);
       headingIndex += 1;
       fragment.appendChild(h);
@@ -745,23 +737,15 @@ function renderMarkdown(content, file) {
     if (unordered || ordered) {
       flushParagraph();
       flushTable();
-      const item = document.createElement(sourceMode && ordered ? "div" : "p");
+      const item = document.createElement("p");
       item.className = `list-line ${ordered ? "ordered-line" : "unordered-line"}`;
       const marker = document.createElement("span");
       marker.className = "list-marker";
       marker.textContent = ordered ? `${ordered[1]}.` : "•";
       const body = document.createElement("span");
       body.className = "list-body";
-      appendInlineMarkdown(body, ordered ? ordered[2].trim() : unordered[1].trim(), {
-        ...context,
-        disableCitations: sourceMode
-      });
+      appendInlineMarkdown(body, ordered ? ordered[2].trim() : unordered[1].trim(), context);
       item.append(marker, body);
-      if (sourceMode && ordered) {
-        item.classList.add("source-line");
-        item.id = makeSourceId(context.fileKey, ordered[1]);
-        item.dataset.sourceNumber = ordered[1];
-      }
       fragment.appendChild(item);
       continue;
     }
@@ -797,8 +781,35 @@ function isTableRow(line) {
   return trimmed.startsWith("|") && trimmed.endsWith("|") && (trimmed.match(/\|/g) || []).length >= 2;
 }
 
-function isSourceHeading(line) {
-  return /^\s*(?:\*\*)?Sources:?(?:\*\*)?\s*$/i.test(String(line || "").trim());
+function parseSourceLine(line) {
+  const match = /^\[cite[\s-]source\]\s*(\d+)\.\s+(.+)$/i.exec(String(line || "").trim());
+  if (!match) {
+    return null;
+  }
+  return {
+    number: match[1],
+    body: match[2].trim()
+  };
+}
+
+function renderSourceLine(sourceLine, context) {
+  const item = document.createElement("div");
+  item.className = "list-line ordered-line source-line";
+  item.id = makeSourceId(context.fileKey, sourceLine.number);
+  item.dataset.sourceNumber = sourceLine.number;
+
+  const marker = document.createElement("span");
+  marker.className = "list-marker";
+  marker.textContent = `${sourceLine.number}.`;
+
+  const body = document.createElement("span");
+  body.className = "list-body";
+  appendInlineMarkdown(body, sourceLine.body, {
+    ...context,
+    disableCitations: true
+  });
+  item.append(marker, body);
+  return item;
 }
 
 function stripOutlinePrefix(text) {
@@ -1004,8 +1015,7 @@ function renderCitationGroup(rawNumbers, context) {
     .map((value) => value.trim())
     .filter(Boolean);
 
-  group.appendChild(document.createTextNode("[cite: "));
-  numbers.forEach((number, index) => {
+  numbers.forEach((number) => {
     const ref = document.createElement("button");
     ref.type = "button";
     ref.className = "cite-ref";
@@ -1014,9 +1024,7 @@ function renderCitationGroup(rawNumbers, context) {
     ref.dataset.sourceTarget = makeSourceId(context.fileKey || "report", number);
     citeRefSerial += 1;
     group.appendChild(ref);
-    if (index < numbers.length - 1) group.appendChild(document.createTextNode(", "));
   });
-  group.appendChild(document.createTextNode("]"));
   return group;
 }
 
@@ -1032,8 +1040,8 @@ function handleReportClick(evt) {
   if (returnButton) {
     evt.preventDefault();
     const citeRef = document.getElementById(returnButton.dataset.returnTarget);
-    if (citeRef) returnToCitation(citeRef);
     clearActiveCitation();
+    if (citeRef) returnToCitation(citeRef);
     return;
   }
 
@@ -1079,6 +1087,9 @@ function activateCitation(cite) {
   };
   cite.classList.add("cite-active");
   source.classList.add("source-highlight");
+  pauseTocScrollSpy(1200);
+  scrollElementToViewport(source, { block: "center", behavior: "smooth" });
+
   const button = document.createElement("button");
   button.type = "button";
   button.className = "source-return";
@@ -1086,7 +1097,6 @@ function activateCitation(cite) {
   button.title = "返回引用位置并清除高亮";
   button.dataset.returnTarget = cite.id;
   source.appendChild(button);
-  scrollElementToViewport(source, { block: "center", behavior: "smooth" });
 }
 
 function clearActiveCitation() {
@@ -1098,6 +1108,7 @@ function clearActiveCitation() {
 
 function returnToCitation(citeRef) {
   clearCitationFlash();
+  pauseTocScrollSpy(1200);
   scrollThenFlashCitation(citeRef);
 }
 

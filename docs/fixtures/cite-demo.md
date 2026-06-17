@@ -92,15 +92,15 @@
 
 填充段落 H2：这一段没有引用，作为正文和 Sources 之间的缓冲。
 
-填充段落 H3：Sources 区域里的文本不应该再被解析成可点击 cite 按钮，否则会污染“返回原文”的目标。
+填充段落 H3：`[cite source]` 来源行里的文本不应该再被解析成可点击 cite 按钮，否则会污染「返回原文」的目标。
 
-**Sources:**
+## 来源
 
-1. Source 1：对应测试点 A，页面上方的单引用 - https://example.com/source-1
-2. Source 2：对应测试点 B，页面中部的单引用 - https://example.com/source-2
-3. Source 3：对应测试点 C，紧凑写法 cite:3 - https://example.com/source-3
-4. Source 4：对应测试点 D，段落内混合普通链接 - https://example.com/source-4
-5. Source 5：对应测试点 E，粗体中的引用 - https://example.com/source-5
-6. Source 6：对应测试点 F，表格中的引用 - https://example.com/source-6
-7. Source 7：对应测试点 G，页面靠下的引用 - https://example.com/source-7
-8. Source 8：对应测试点 H，Sources 前最后一处引用 - https://example.com/source-8
+[cite source] 1. Source 1：对应测试点 A，页面上方的单引用 - https://example.com/source-1
+[cite source] 2. Source 2：对应测试点 B，页面中部的单引用 - https://example.com/source-2
+[cite source] 3. Source 3：对应测试点 C，紧凑写法 cite:3 - https://example.com/source-3
+[cite source] 4. Source 4：对应测试点 D，段落内混合普通链接 - https://example.com/source-4
+[cite source] 5. Source 5：对应测试点 E，粗体中的引用 - https://example.com/source-5
+[cite source] 6. Source 6：对应测试点 F，表格中的引用 - https://example.com/source-6
+[cite source] 7. Source 7：对应测试点 G，页面靠下的引用 - https://example.com/source-7
+[cite source] 8. Source 8：对应测试点 H，Sources 前最后一处引用 - https://example.com/source-8
