@@ -683,7 +683,7 @@ function renderHeadingNode(node) {
     anchorId: node.heading.anchor,
     outlineNumber: node.heading.outlineNumber,
     text: node.heading.cleanText,
-    className: `toc-heading level-${Math.min(node.heading.level, 4)}`,
+    className: `toc-heading level-${Math.min(node.heading.level, 6)}`,
     level: node.heading.level,
     children: node.children
   });

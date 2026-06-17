@@ -351,3 +351,415 @@
 - 完整 CommonMark 自动编号脚注等扩展
 
 如需扩展支持，请在插件仓库中修改 `media/reportViewer.js` 并同步更新本文档。
+---
+tags:
+  - Meta
+  - tech
+  - VSCode
+  - Cursor
+date: 2026-06-18
+research_query: VS Code 扩展本地安装（Cursor）与 Marketplace / Open VSX 发布的最新流程与变化
+research_rounds: 2
+source_count: 12
+---
+
+# VS Code 扩展：本地安装（Cursor）与商城发布指南
+
+## 摘要
+
+本文面向 **Markdown 阅读器 / Meow Report Viewer** 等 VS Code 扩展项目，基于 2025–2026 年官方文档与 Cursor 社区信息，说明：① 在 **Cursor** 本地安装与调试；② 发布到 **Visual Studio Code Marketplace**；③ 同步发布 **Open VSX** 供 Cursor 搜索安装；④ 两渠道下的更新策略。关键变化：**Marketplace 网页已移除「Download Extension」按钮**（须在 VS Code/Cursor 扩展视图右键下载 VSIX，或走 Open VSX / API URL）[cite:1][cite:2]；**vsce 打包时会扫描密钥与 `.env`**，误报可显式放行 [cite:3]；**Azure DevOps 全局 PAT 将于 2026-12-01 退役**，CI 发布宜迁移 **Microsoft Entra ID** [cite:4]；Open VSX 发布现需 **Eclipse 账号 + Publisher Agreement** [cite:5]。
+
+## 关键词
+
+VS Code 扩展、Cursor、vsce、vsix、Open VSX、Marketplace、Entra ID、密钥扫描、本地安装、版本更新
+
+## 相关文档索引
+
+- [[MarkdownSideBar]] — 关联点：侧边栏 Markdown 阅读器产品需求
+- [[CommonMark 与 GFM 规范调研]] — 关联点：阅读器应支持的 Markdown 语法层级
+- [[VS Code扩展本地安装与发布指南]] — 关联点：本文（2026-06 再调研更新版）
+- [[Skill 体系与关联关系]] — 关联点：文档生产三层流水线
+
+---
+
+## 适用场景
+
+- 开发 Markdown 阅读器扩展，想先在 **Cursor** 自用
+- 稳定后发布到 **VS Code Marketplace**，并视需要同步 **Open VSX**
+- 需要厘清：本地怎么更新、商城怎么发版、Cursor 为何搜不到刚发的扩展
+
+---
+
+## 一、前置准备
+
+### 1.1 扩展项目必备结构
+
+| 文件/目录 | 作用 |
+|-----------|------|
+| `package.json` | 清单：`name`、`publisher`、`version`、`engines.vscode`、`contributes` 等 [cite:6] |
+| `src/` 或 `extension.ts` | 扩展主逻辑 |
+| `README.md` | 商城展示页 |
+| `CHANGELOG.md` | 版本变更（商城 Changelog 页） |
+| `icon.png` | 128×128 PNG（**勿用 SVG**）[cite:4] |
+
+`package.json` 关键字段：
+
+```json
+{
+  "name": "meow-report-viewer",
+  "displayName": "Meow Report Viewer",
+  "publisher": "your-publisher-id",
+  "version": "0.1.0",
+  "engines": { "vscode": "^1.85.0" },
+  "main": "./out/extension.js",
+  "repository": { "type": "git", "url": "https://github.com/you/repo.git" }
+}
+```
+
+- **`publisher`**：与 Marketplace Publisher ID 一致，创建后**不可改** [cite:4]
+- **`engines.vscode`**：声明兼容 API 版本；Cursor 安装时也会校验 [cite:7]
+
+### 1.2 开发工具
+
+```bash
+node -v                    # 建议 LTS 20+；vsce 最新版倾向 Node 22+ [cite:8]
+npm install -g @vscode/vsce
+npm install -g ovsx        # 若要发 Open VSX
+```
+
+首次创建可用 `yo generator-code` 脚手架 [cite:4]。
+
+### 1.3 本地开发是否需要 Publisher？
+
+**不需要**。F5 调试或 `vsce package` 本地装 `.vsix` 均无需 PAT / Publisher；Publisher 仅在**首次上架商城**时需要 [cite:4]。
+
+---
+
+## 二、本地安装到 Cursor
+
+Cursor 与 VS Code 共用扩展 API 与 `.vsix` 格式 [cite:7]，但内置市场不同（见第四节）。
+
+### 方式 A：F5 调试（日常首选）
+
+1. 用 Cursor 打开扩展项目根目录
+2. 按 **F5** → 新开 **Extension Development Host** 窗口
+3. 在该窗口验证功能；改代码后 **Developer: Reload Window**
+
+不污染日常扩展列表，无需打包。
+
+### 方式 B：打包 `.vsix` 后安装（接近真实环境）
+
+```bash
+npm install
+npm run compile          # 若有 TS 编译
+vsce package             # 生成 name-version.vsix
+```
+
+安装（任选）：
+
+```bash
+cursor --install-extension ./meow-report-viewer-0.1.0.vsix
+# 或加 --force 覆盖同版本
+```
+
+图形界面：`Cmd+Shift+P` → **`Extensions: Install from VSIX...`**，或将 `.vsix` **拖入**扩展面板 [cite:9]。
+
+### 方式 C：从已安装扩展目录复制（离线分发）
+
+若机器上已有同扩展（如便携版 VS Code），可在 `data/extensions`（路径因安装方式而异）找到扩展目录再 `vsce package` [cite:10]。一般不如 A/B 常用。
+
+### 本地验证清单（Meow 阅读器）
+
+- [ ] `[cite:x]` / `[cite source]` 跳转是否正常
+- [ ] 侧边栏 TOC 层级（对照 [[MarkdownSideBar]]）
+- [ ] CommonMark / GFM 渲染范围（见 [[CommonMark 与 GFM 规范调研]]）
+
+### 注意：手动 VSIX **不会自动更新**
+
+Marketplace / Open VSX 安装才走更新通道；本地 VSIX 每次改完须重新 `package` + 安装 [cite:9]。
+
+---
+
+## 三、发布到 VS Code Marketplace
+
+官方工具为 **`@vscode/vsce`**：`vsce package` 打 `.vsix`，`vsce publish` 上传商城 [cite:4]。
+
+### 3.1 身份与认证（2026 年前后的变化）
+
+Marketplace 后台基于 **Azure DevOps** [cite:4]。
+
+| 方式 | 适用 | 说明 |
+|------|------|------|
+| **PAT + `vsce login`** | 个人本地首发 / 手工发版 | Azure DevOps → Personal Access Tokens → 范围 **Marketplace (Manage)**；Organization 选 **All accessible organizations** [cite:4][cite:11] |
+| **Microsoft Entra ID** | CI/CD 自动发版（推荐） |  workload identity federation + 托管标识；**2026-12-01 全局 PAT 退役** [cite:4] |
+| **`VSCE_PAT` 环境变量** | GitHub Actions / Azure Pipelines | CI 文档仍支持密钥变量方式 [cite:12] |
+
+个人首次发布流程（PAT，现阶段仍可用）：
+
+1. [marketplace.visualstudio.com/manage](https://marketplace.visualstudio.com/manage) 创建 **Publisher**（ID = `package.json` 的 `publisher`）
+2. `vsce login <publisher-id>` 粘贴 PAT
+3. `vsce publish` 或 `vsce publish patch`
+
+### 3.2 发布前检查（含 2025 新增约束）
+
+| 检查项 | 说明 |
+|--------|------|
+| README / CHANGELOG 图片 | 须 `https://`；**禁止用户上传 SVG**（icon、badge、README 图）[cite:4] |
+| `icon.png` | 128×128 PNG |
+| 密钥与 `.env` | **vsce 打包时自动扫描**；含 API key、token、`.env` 会**报错阻断** [cite:3][cite:13] |
+| `repository`、`license`、`categories` | 建议齐全 |
+| 平台相关原生依赖 | 需 `--target` 分包发布（vsce ≥1.99.0）[cite:4] |
+
+本地自检：
+
+```bash
+vsce package
+# 检查 .vsix 体积与是否误打包 node_modules
+```
+
+若密钥扫描误报：`--allow-package-secrets <type>` 或 `--allow-package-env-file`（谨慎使用）[cite:3]。
+
+### 3.3 首次发布与更新
+
+```bash
+vsce publish              # 首次
+vsce publish patch        # 自动 bump 补丁号并发布
+vsce publish minor
+vsce publish 0.2.0
+```
+
+在 git 仓库内执行时，vsce 可能自动打 version commit 与 tag [cite:4]。
+
+上架后索引约 **5–15 分钟**；验证：
+
+```text
+https://marketplace.visualstudio.com/items?itemName=<publisher>.<name>
+```
+
+### 3.4 商城侧安全机制（用户安装时）
+
+- 首次安装**第三方 Publisher** 扩展会弹出**信任确认**（VS Code 1.97+）[cite:13]
+- 上架前 **恶意软件扫描**；通过前可能暂不公开 [cite:13]
+- 扩展包 **签名验证**；Marketplace 也会扫描发布物中的密钥 [cite:13]
+
+---
+
+## 四、Cursor 与 VS Code 商城的关系
+
+| 维度 | VS Code | Cursor |
+|------|---------|--------|
+| 扩展 API | 相同 | 相同（基于 VS Code）[cite:7] |
+| 内置扩展市场 | Microsoft Marketplace | **Open VSX**（2025 年中切换）[cite:14] |
+| 搜 VS Code 商城已上架扩展 | ✓ | ✗（未上 Open VSX 则搜不到） |
+| 手动装 `.vsix` | ✓ | ✓ [cite:14] |
+| Open VSX 上架后自动更新 | — | ✓（版本号更高时）[cite:14] |
+
+Cursor 官方说明：市场改为 Open VSX；常见扩展由 **Anysphere** 重发兼容版；缺失扩展应请作者发布到 Open VSX，或手动装 `.vsix` [cite:14]。v1.1.3+ 可尝试切换市场后端，但**非官方支持** [cite:14]。
+
+**结论**：
+
+- 只发 VS Code Marketplace → VS Code 用户可搜；Cursor 用户需 **VSIX 手动装** 或你从 Open VSX 再发
+- 目标含 Cursor → **强烈建议双发** Open VSX
+
+---
+
+## 五、发布到 Open VSX（Cursor 可搜索）
+
+Open VSX 公共注册表由 **Eclipse Foundation** 运营 [cite:5]。
+
+### 5.1 一次性准备（2026 流程）
+
+1. 注册 **Eclipse 账号**（GitHub 用户名须与登录 open-vsx.org 一致）[cite:5]
+2. 登录 [open-vsx.org](https://open-vsx.org/) → Profile → **签署 Publisher Agreement**（非 ECA）[cite:5]
+3. Settings → **Access Tokens** → 生成 Token（丢失只能删了重建）[cite:5]
+4. 创建 namespace（= `package.json` 的 `publisher`）：
+
+```bash
+npx ovsx create-namespace <publisher-id> -p <OVSX_TOKEN>
+```
+
+可选：认领 namespace 以显示 **verified** 标记 [cite:5]。
+
+### 5.2 发布
+
+```bash
+npx ovsx publish -p <OVSX_TOKEN>                    # 自动 package + 上传
+npx ovsx publish ./ext-0.1.0.vsix -p <OVSX_TOKEN>   # 上传已有 vsix
+```
+
+`ovsx` 内部调用 `vsce`，会跑 `vscode:prepublish` [cite:5]。
+
+### 5.3 Open VSX 发布扫描（2026）
+
+注册表可能启用：**密钥检测**、**blocklist 哈希**、**namespace 相似度（防 typosquatting）**；失败会拒绝发布，可按提示修复或加 `// secret-detector:ignore` 抑制误报 [cite:5]。
+
+### 5.4 CI 双发
+
+可用 GitHub Action（如 HaaLeo/publish-vscode-extension）在打 tag 时 `vsce publish` + `ovsx publish` [cite:5][cite:12]。
+
+---
+
+## 六、如何获取他人扩展的 VSIX（Cursor 装不到时）
+
+Microsoft **已移除 Marketplace 网页上的「Download Extension」按钮**（原因：预发布版与平台特定包易混淆）；官方建议在 **VS Code/Cursor 扩展视图** 对扩展右键 → **Download VSIX** / **Download Specific Version VSIX** [cite:1][cite:2]。
+
+其他方式：
+
+| 方式 | 说明 |
+|------|------|
+| Open VSX 页面 | 多数扩展有直接下载 [cite:10] |
+| Marketplace API URL | `https://marketplace.visualstudio.com/_apis/public/gallery/publishers/{publisher}/vsextensions/{name}/{version}/vspackage`（可加 `?targetPlatform=win32-x64` 等）[cite:10] |
+| 自己 `vsce package` | 扩展开源仓库本地打包 |
+
+在 Cursor 装下载来的 VSIX：**不会自动更新** [cite:9]。
+
+---
+
+## 七、两处分别如何更新
+
+原则：对外发版必须 **bump `version`**（SemVer）；`vsce publish patch` 等会自动改 `package.json` [cite:4]。
+
+```mermaid
+flowchart TD
+    A[改代码 + CHANGELOG] --> B[bump version]
+    B --> C{目标}
+    C -->|仅本地 Cursor| D[vsce package]
+    D --> E[cursor --install-extension]
+    C -->|VS Code 用户| F[vsce publish]
+    C -->|Cursor 可搜索| G[ovsx publish]
+```
+
+### 7.1 只更新本地 Cursor
+
+```bash
+npm run compile && vsce package
+cursor --install-extension ./ext-0.1.1.vsix --force
+```
+
+开发期优先 **F5**，省去反复打包。
+
+### 7.2 更新 VS Code 商城
+
+```bash
+# 更新 CHANGELOG.md
+vsce publish patch
+```
+
+已安装用户：扩展视图提示 Update，或自动更新 [cite:2]。
+
+### 7.3 更新 Cursor（Open VSX）
+
+```bash
+vsce publish patch
+npx ovsx publish -p $OVSX_PAT
+```
+
+两边 **version 建议一致**；Cursor 从 Open VSX 拉更新 [cite:14]。
+
+### 7.4 标准发版 checklist
+
+1. F5 / 本地 `.vsix` 自测
+2. 更新 `CHANGELOG.md`
+3. `vsce package`（确认无密钥扫描错误）
+4. `vsce publish patch`
+5. `npx ovsx publish`（若服务 Cursor）
+6. 干净环境从市场安装验证
+7. `git push && git push --tags`
+
+| 操作 | version | 本地 VSIX | VS Code 商城 | Open VSX |
+|------|---------|-----------|--------------|----------|
+| 日常调试 | 可不变 | F5 | 不变 | 不变 |
+| 本地重装 | +patch | package+install | 不变 | 不变 |
+| 对外发版 | **递增** | 可选 | `vsce publish` | `ovsx publish` |
+
+---
+
+## 八、常见问题
+
+### Q1：Cursor 搜不到刚发 VS Code 商城的扩展？
+
+正常。请发 **Open VSX** 或 **Install from VSIX**。两市场不同源 [cite:14]。
+
+### Q2：`vsce package` / `publish` 报 secret 错误？
+
+vsce 1.101+ 与 Marketplace 均会扫密钥 [cite:3][cite:13]。从源码移除敏感信息；勿把 `.env` 打进包；确属误报再用 `--allow-package-*` [cite:3]。
+
+### Q3：`vsce publish` 报 SVG 错误？
+
+用户提供的 SVG 图标/图片不允许 [cite:4]。改用 PNG。
+
+### Q4：PAT 还能用多久？
+
+**全局 PAT 2026-12-01 退役**；个人手工发版短期内仍可用，CI 宜规划 Entra ID [cite:4]。
+
+### Q5：网页找不到 Download Extension？
+
+已移除；在编辑器扩展列表右键下载，或 Open VSX / API URL [cite:1][cite:2]。
+
+### Q6：平台特定扩展（含 native 模块）怎么发？
+
+`vsce publish --target win32-x64 win32-arm64 ...` 或分包 `package --target` 再 `publish --packagePath` [cite:4]。
+
+### Q7：只维护一份代码、两个市场？
+
+可以。同一仓库，`vsce publish` + `ovsx publish`；版本号共用。
+
+---
+
+## 九、Meow 阅读器发布建议
+
+`README.md` 建议写明：
+
+1. 支持 **Meow Report Markdown**（`[cite:x]` + `[cite source]`）
+2. CommonMark / GFM 支持范围
+3. Vault 内 `.md` 相对路径跳转行为
+
+与 Vault 研报工作流闭环：写研报 → 装阅读器 → cite 可点击校验。
+
+---
+
+## 十、命令速查
+
+```bash
+# 本地开发
+npm run compile && code .   # 或 Cursor 打开
+# F5
+
+# 打包
+vsce package
+
+# 安装到 Cursor
+cursor --install-extension ./<name>-<version>.vsix
+
+# VS Code 商城（先 vsce login）
+vsce publish patch
+
+# Open VSX（先 create-namespace + Publisher Agreement）
+npx ovsx publish -p <OVSX_TOKEN>
+
+# 平台特定
+vsce package --target darwin-arm64
+vsce publish --target darwin-arm64 linux-x64
+
+# 已安装
+cursor --list-extensions | grep meow
+```
+
+---
+
+## 来源
+
+[cite source] 1. VS Code Marketplace Team — 移除网页 Download Extension 按钮；建议在编辑器扩展视图右键下载 — [GitHub Issue #1135](https://github.com/microsoft/vsmarketplace/issues/1135)
+[cite source] 2. Microsoft — Extension Marketplace 用户文档：Install from VSIX、右键 Download VSIX — [Extension Marketplace](https://code.visualstudio.com/docs/configure/extensions/extension-marketplace)
+[cite source] 3. Microsoft — VS Code 1.101：vsce 打包时密钥扫描与放行 flag — [May 2025 (1.101) Release Notes](https://code.visualstudio.com/updates/v1_101)
+[cite source] 4. Microsoft — vsce 安装/发布、PAT、Entra ID、SVG 限制、--target — [Publishing Extensions](https://code.visualstudio.com/api/working-with-extensions/publishing-extension)
+[cite source] 5. Eclipse Open VSX — Eclipse 账号、Publisher Agreement、Token、namespace、发布扫描 — [Publishing Extensions Wiki](https://github.com/eclipse-openvsx/openvsx/wiki/Publishing-Extensions)
+[cite source] 6. Microsoft — package.json 必填字段与 engines.vscode — [Extension Manifest](https://code.visualstudio.com/api/references/extension-manifest)
+[cite source] 7. Ahmed's Blog — Cursor 与 VS Code 共用 VSIX 打包模型；手动安装流程 — [Building and Installing VS Code Extensions in Cursor](https://www.ahmedehab.com/blog/cursor-extensions/)
+[cite source] 8. Microsoft — vsce 仓库：Node.js 版本要求 — [@vscode/vsce GitHub](https://github.com/microsoft/vscode-vsce)
+[cite source] 9. Mehmet Baykar — Cursor 安装 VSIX：命令面板与 cursor --install-extension；无自动更新 — [Install VSCode Extension from local repo](https://mehmetbaykar.com/posts/how-to-install-vscode-extension-from-your-custom-or-local-repo/)
+[cite source] 10. Stack Overflow / 社区 — Marketplace API URL 构造下载 VSIX；open-vsx 替代 — [How to download .vsix files](https://stackoverflow.com/questions/79359919/how-can-i-download-vsix-files-now-that-the-visual-studio-code-marketplace-no-lo)
+[cite source] 11. Microsoft — PAT 创建：Marketplace (Manage)、All accessible organizations — [Publishing Extensions § FAQ](https://code.visualstudio.com/api/working-with-extensions/publishing-extension)
+[cite source] 12. Microsoft — CI 发布：VSCE_PAT 环境变量、GitHub Actions — [Continuous Integration](https://code.visualstudio.com/api/working-with-extensions/continuous-integration)
+[cite source] 13. Microsoft — 扩展信任对话框、恶意软件扫描、签名与密钥扫描 — [Extension runtime security](https://code.visualstudio.com/docs/configure/extensions/extension-runtime-security)
+[cite source] 14. Cursor / Anysphere — 市场切换 Open VSX、Anysphere 重发、VSIX 拖放、非官方切换市场 — [Extension Marketplace Changes](https://forum.cursor.com/t/extension-marketplace-changes-transition-to-openvsx/109138)

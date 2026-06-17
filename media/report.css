@@ -157,7 +157,7 @@ body {
   border: 0;
   border-bottom: 1px solid var(--line);
   background: var(--paper-strong);
-  color: var(--blue);
+  color: var(--text);
   font: inherit;
   font-size: calc(12px * var(--font-scale));
   font-weight: 700;
@@ -168,7 +168,7 @@ body {
 }
 
 .toc-toggle:hover {
-  background: var(--blue-soft);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
 }
 
 .toc-dock.collapsed .toc-toggle {
@@ -232,8 +232,7 @@ body {
 }
 
 .toc a:hover {
-  background: var(--blue-soft);
-  color: var(--blue);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
 }
 
 .toc a:focus,
@@ -242,9 +241,8 @@ body {
 }
 
 .toc a.toc-active {
-  background: var(--blue-soft);
-  color: var(--blue);
-  font-weight: 600;
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+  font-weight: 700;
 }
 
 .toc-branch-row {
@@ -302,12 +300,7 @@ body {
   font-weight: 700;
 }
 
-html:not(.rainbow-headings) .toc-file-title,
-html.rainbow-headings.show-toc-numbers .toc-file-title:not(:hover):not(.toc-active) {
-  color: var(--blue);
-}
-
-html.rainbow-headings:not(.show-toc-numbers) .toc-file-title:not(:hover):not(.toc-active) .outline-text {
+html.rainbow-headings:not(.show-toc-numbers) .toc-file-title .outline-text {
   color: #e53935;
 }
 
@@ -330,12 +323,18 @@ html.rainbow-headings:not(.show-toc-numbers) .toc-file-title:not(:hover):not(.to
 
 .toc-heading.level-3 {
   padding-left: 10px;
-  color: var(--muted);
 }
 
 .toc-heading.level-4 {
   padding-left: 14px;
-  color: var(--muted);
+}
+
+.toc-heading.level-5 {
+  padding-left: 18px;
+}
+
+.toc-heading.level-6 {
+  padding-left: 22px;
 }
 
 .report-file {
@@ -362,7 +361,7 @@ html.rainbow-headings:not(.show-toc-numbers) .toc-file-title:not(:hover):not(.to
 .report-file > h5,
 .report-file > h6 {
   scroll-margin-top: calc(var(--topbar-height) + 12px);
-  color: var(--blue);
+  color: var(--text);
   margin: 24px 0 10px;
   line-height: 1.35;
   font-size: calc(23px * var(--font-scale));
@@ -436,40 +435,69 @@ html.rainbow-headings.show-content-numbers .report-file > h6 .outline-number {
   color: #8e24aa;
 }
 
-html.rainbow-headings:not(.show-toc-numbers) .toc a.toc-heading.level-1:not(:hover):not(.toc-active) .outline-text {
+html.rainbow-headings.show-content-numbers .report-file > h1 .outline-text,
+html.rainbow-headings.show-content-numbers .report-file > h2 .outline-text,
+html.rainbow-headings.show-content-numbers .report-file > h3 .outline-text,
+html.rainbow-headings.show-content-numbers .report-file > h4 .outline-text,
+html.rainbow-headings.show-content-numbers .report-file > h5 .outline-text,
+html.rainbow-headings.show-content-numbers .report-file > h6 .outline-text {
+  color: var(--text);
+}
+
+html.rainbow-headings.show-toc-numbers .toc a .outline-text {
+  color: var(--text);
+}
+
+html.rainbow-headings:not(.show-toc-numbers) .toc a.toc-heading.level-1 .outline-text {
   color: #f57c00;
 }
 
-html.rainbow-headings:not(.show-toc-numbers) .toc a.toc-heading.level-2:not(:hover):not(.toc-active) .outline-text {
+html.rainbow-headings:not(.show-toc-numbers) .toc a.toc-heading.level-2 .outline-text {
   color: #f9a825;
 }
 
-html.rainbow-headings:not(.show-toc-numbers) .toc a.toc-heading.level-3:not(:hover):not(.toc-active) .outline-text {
+html.rainbow-headings:not(.show-toc-numbers) .toc a.toc-heading.level-3 .outline-text {
   color: #43a047;
 }
 
-html.rainbow-headings:not(.show-toc-numbers) .toc a.toc-heading.level-4:not(:hover):not(.toc-active) .outline-text {
+html.rainbow-headings:not(.show-toc-numbers) .toc a.toc-heading.level-4 .outline-text {
   color: #00838f;
 }
 
-html.rainbow-headings.show-toc-numbers .toc a.toc-file-title:not(:hover):not(.toc-active) .outline-number {
+html.rainbow-headings:not(.show-toc-numbers) .toc a.toc-heading.level-5 .outline-text {
+  color: #8e24aa;
+}
+
+html.rainbow-headings:not(.show-toc-numbers) .toc a.toc-heading.level-6 .outline-text {
+  color: #8e24aa;
+}
+
+html.rainbow-headings.show-toc-numbers .toc a.toc-file-title .outline-number {
   color: #e53935;
 }
 
-html.rainbow-headings.show-toc-numbers .toc a.toc-heading.level-1:not(:hover):not(.toc-active) .outline-number {
+html.rainbow-headings.show-toc-numbers .toc a.toc-heading.level-1 .outline-number {
   color: #f57c00;
 }
 
-html.rainbow-headings.show-toc-numbers .toc a.toc-heading.level-2:not(:hover):not(.toc-active) .outline-number {
+html.rainbow-headings.show-toc-numbers .toc a.toc-heading.level-2 .outline-number {
   color: #f9a825;
 }
 
-html.rainbow-headings.show-toc-numbers .toc a.toc-heading.level-3:not(:hover):not(.toc-active) .outline-number {
+html.rainbow-headings.show-toc-numbers .toc a.toc-heading.level-3 .outline-number {
   color: #43a047;
 }
 
-html.rainbow-headings.show-toc-numbers .toc a.toc-heading.level-4:not(:hover):not(.toc-active) .outline-number {
+html.rainbow-headings.show-toc-numbers .toc a.toc-heading.level-4 .outline-number {
   color: #00838f;
+}
+
+html.rainbow-headings.show-toc-numbers .toc a.toc-heading.level-5 .outline-number {
+  color: #8e24aa;
+}
+
+html.rainbow-headings.show-toc-numbers .toc a.toc-heading.level-6 .outline-number {
+  color: #8e24aa;
 }
 
 p {
