@@ -1,0 +1,79 @@
+{
+  "name": "meow-report-markdown-viewer",
+  "displayName": "Meow Report Markdown Viewer",
+  "description": "Render markdown reports with TOC and citation navigation in VS Code editor area.",
+  "version": "0.0.1",
+  "publisher": "meow-agent",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onLanguage:markdown",
+    "onCustomEditor:meowReportMarkdown.viewer"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "meowReportMarkdown.openPreview",
+        "title": "Open with Meow Report Markdown Viewer"
+      }
+    ],
+    "configurationDefaults": {
+      "workbench.editorAssociations": {
+        "*.md": "meowReportMarkdown.viewer"
+      }
+    },
+    "customEditors": [
+      {
+        "viewType": "meowReportMarkdown.viewer",
+        "displayName": "Meow Report Markdown Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*.md"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "meowReportMarkdown.openPreview",
+          "when": "resourceExtname == .md"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "meowReportMarkdown.openPreview",
+          "when": "resourceExtname == .md"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Meow Report Markdown Viewer",
+      "properties": {
+        "meowReportMarkdown.autoOpenReaderMode": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically open .md files with Meow Report Markdown Viewer."
+        }
+      }
+    }
+  },
+  "main": "./out/extension.js",
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.57",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^2.32.0",
+    "typescript": "^5.8.3"
+  }
+}

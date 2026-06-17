@@ -1,0 +1,341 @@
+import * as path from "path";
+import * as vscode from "vscode";
+import { buildReportPayload } from "./reportData";
+
+type ViewerMessage =
+  | { type: "ready" }
+  | { type: "openExternal"; href?: string }
+  | { type: "openFile"; href?: string };
+
+const READER_VIEW_TYPE = "meowReportMarkdown.viewer";
+const textModeUris = new Set<string>();
+
+export function activate(context: vscode.ExtensionContext): void {
+  const provider = new ReportMarkdownEditorProvider(context);
+
+  context.subscriptions.push(
+    vscode.window.registerCustomEditorProvider(READER_VIEW_TYPE, provider, {
+      webviewOptions: {
+        retainContextWhenHidden: true
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("meowReportMarkdown.openPreview", async (uri?: vscode.Uri) => {
+      const target = uri ?? vscode.window.activeTextEditor?.document.uri;
+      if (!target) {
+        return;
+      }
+      textModeUris.delete(target.toString());
+      await vscode.commands.executeCommand("vscode.openWith", target, READER_VIEW_TYPE);
+    })
+  );
+
+  setupAutoOpenReaderMode(context);
+}
+
+function isAutoOpenEnabled(): boolean {
+  return vscode.workspace.getConfiguration("meowReportMarkdown").get<boolean>("autoOpenReaderMode", true);
+}
+
+function hasReaderModeTab(uri: vscode.Uri): boolean {
+  return vscode.window.tabGroups.all.some((group) =>
+    group.tabs.some((tab) => {
+      if (!(tab.input instanceof vscode.TabInputCustom)) {
+        return false;
+      }
+      return tab.input.viewType === READER_VIEW_TYPE && tab.input.uri.toString() === uri.toString();
+    })
+  );
+}
+
+async function maybeAutoOpenReaderMode(uri: vscode.Uri): Promise<void> {
+  if (!isAutoOpenEnabled()) {
+    return;
+  }
+  if (!uri.fsPath.toLowerCase().endsWith(".md")) {
+    return;
+  }
+  if (textModeUris.has(uri.toString())) {
+    return;
+  }
+  if (hasReaderModeTab(uri)) {
+    return;
+  }
+
+  try {
+    await vscode.commands.executeCommand("vscode.openWith", uri, READER_VIEW_TYPE);
+  } catch {
+    // Ignore auto-open failures; user can reopen via Open With or explorer context menu.
+  }
+}
+
+function setupAutoOpenReaderMode(context: vscode.ExtensionContext): void {
+  context.subscriptions.push(
+    vscode.window.tabGroups.onDidChangeTabs((event) => {
+      for (const closed of event.closed) {
+        if (!(closed.input instanceof vscode.TabInputCustom)) {
+          continue;
+        }
+        if (closed.input.viewType !== READER_VIEW_TYPE) {
+          continue;
+        }
+
+        const uri = closed.input.uri.toString();
+        const openedText = event.opened.find(
+          (tab) => tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === uri
+        );
+        if (openedText) {
+          textModeUris.add(uri);
+        }
+      }
+
+      for (const opened of event.opened) {
+        if (!(opened.input instanceof vscode.TabInputText)) {
+          continue;
+        }
+        if (!opened.input.uri.fsPath.toLowerCase().endsWith(".md")) {
+          continue;
+        }
+
+        const uri = opened.input.uri;
+        const fromReader = event.closed.some(
+          (tab) =>
+            tab.input instanceof vscode.TabInputCustom &&
+            tab.input.viewType === READER_VIEW_TYPE &&
+            tab.input.uri.toString() === uri.toString()
+        );
+        if (fromReader) {
+          textModeUris.add(uri.toString());
+          continue;
+        }
+
+        setTimeout(() => {
+          void maybeAutoOpenReaderMode(uri);
+        }, 80);
+      }
+    })
+  );
+
+  for (const document of vscode.workspace.textDocuments) {
+    if (document.uri.fsPath.toLowerCase().endsWith(".md")) {
+      setTimeout(() => {
+        void maybeAutoOpenReaderMode(document.uri);
+      }, 80);
+    }
+  }
+
+  context.subscriptions.push(
+    vscode.workspace.onDidOpenTextDocument((document) => {
+      if (!document.uri.fsPath.toLowerCase().endsWith(".md")) {
+        return;
+      }
+      setTimeout(() => {
+        void maybeAutoOpenReaderMode(document.uri);
+      }, 80);
+    })
+  );
+}
+
+class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
+  constructor(private readonly context: vscode.ExtensionContext) {}
+
+  async resolveCustomTextEditor(
+    document: vscode.TextDocument,
+    webviewPanel: vscode.WebviewPanel,
+    _token: vscode.CancellationToken
+  ): Promise<void> {
+    webviewPanel.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, "media")]
+    };
+
+    webviewPanel.webview.html = this.getHtml(webviewPanel.webview);
+
+    let disposed = false;
+    let ready = false;
+    let updateTimer: ReturnType<typeof setTimeout> | undefined;
+    let pendingUpdate = false;
+
+    const update = async (): Promise<void> => {
+      if (disposed || !ready) {
+        pendingUpdate = true;
+        return;
+      }
+
+      pendingUpdate = false;
+      try {
+        const payload = await buildReportPayload(document.uri, document.getText());
+        if (disposed) {
+          return;
+        }
+        await webviewPanel.webview.postMessage({ type: "render", payload });
+      } catch (error) {
+        if (disposed) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        await webviewPanel.webview.postMessage({
+          type: "render",
+          payload: {
+            ok: true,
+            title: "Report Markdown Viewer",
+            meta: message,
+            rootUri: document.uri.toString(),
+            files: []
+          }
+        });
+      }
+    };
+
+    const scheduleUpdate = (): void => {
+      if (disposed) {
+        return;
+      }
+      if (updateTimer) {
+        clearTimeout(updateTimer);
+      }
+      updateTimer = setTimeout(() => {
+        updateTimer = undefined;
+        void update();
+      }, 150);
+    };
+
+    const messageSub = webviewPanel.webview.onDidReceiveMessage(async (message: ViewerMessage) => {
+      if (disposed) {
+        return;
+      }
+
+      if (message.type === "ready") {
+        ready = true;
+        await update();
+        return;
+      }
+
+      if (message.type === "openExternal" && message.href) {
+        await this.openExternal(message.href);
+        return;
+      }
+
+      if (message.type === "openFile" && message.href) {
+        await this.openFileFromHref(document.uri, message.href);
+      }
+    });
+
+    const changeSub = vscode.workspace.onDidChangeTextDocument((event) => {
+      if (event.document.uri.toString() === document.uri.toString()) {
+        scheduleUpdate();
+      }
+    });
+
+    const saveSub = vscode.workspace.onDidSaveTextDocument((saved) => {
+      if (saved.uri.toString() === document.uri.toString()) {
+        scheduleUpdate();
+      }
+    });
+
+    webviewPanel.onDidDispose(() => {
+      disposed = true;
+      if (updateTimer) {
+        clearTimeout(updateTimer);
+      }
+      messageSub.dispose();
+      changeSub.dispose();
+      saveSub.dispose();
+    });
+  }
+
+  private async openExternal(href: string): Promise<void> {
+    try {
+      const parsed = vscode.Uri.parse(href, true);
+      if (!["http", "https", "mailto"].includes(parsed.scheme)) {
+        return;
+      }
+      await vscode.env.openExternal(parsed);
+    } catch {
+      // Ignore invalid external URL.
+    }
+  }
+
+  private async openFileFromHref(baseDocumentUri: vscode.Uri, href: string): Promise<void> {
+    const target = this.resolveMarkdownHref(baseDocumentUri, href);
+    if (!target) {
+      return;
+    }
+
+    const folder = vscode.workspace.getWorkspaceFolder(baseDocumentUri);
+    if (folder && !this.isSubPath(folder.uri.fsPath, target.fsPath)) {
+      vscode.window.showWarningMessage("只能打开当前 workspace 内部的 Markdown 路径。");
+      return;
+    }
+
+    await vscode.commands.executeCommand("vscode.open", target);
+  }
+
+  private resolveMarkdownHref(baseDocumentUri: vscode.Uri, href: string): vscode.Uri | null {
+    const trimmed = String(href || "").trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      return null;
+    }
+
+    try {
+      const maybeUri = vscode.Uri.parse(trimmed, true);
+      if (maybeUri.scheme) {
+        if (maybeUri.scheme === "file") {
+          return maybeUri;
+        }
+        return null;
+      }
+    } catch {
+      // Continue with relative path logic.
+    }
+
+    const cleanPath = trimmed.split(/[?#]/)[0];
+    if (!cleanPath || !cleanPath.toLowerCase().endsWith(".md")) {
+      return null;
+    }
+
+    const baseDir = vscode.Uri.file(path.dirname(baseDocumentUri.fsPath));
+    return vscode.Uri.joinPath(baseDir, cleanPath);
+  }
+
+  private isSubPath(parentPath: string, candidatePath: string): boolean {
+    const relative = path.relative(path.resolve(parentPath), path.resolve(candidatePath));
+    return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  }
+
+  private getHtml(webview: vscode.Webview): string {
+    const cssUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "report.css"));
+    const jsUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "reportViewer.js"));
+    const nonce = String(Date.now());
+
+    return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https: data:; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="${cssUri}" />
+  <title>Report Markdown Viewer</title>
+</head>
+<body>
+  <header class="report-topbar">
+    <div class="report-topbar-main">
+      <h1 id="gameTitle">Report Markdown Viewer</h1>
+      <p id="gameMeta"></p>
+    </div>
+  </header>
+  <main id="reportLayout" class="report-layout layout-toc-open">
+    <aside id="tocDock" class="toc-dock" aria-label="文档目录">
+      <button id="tocToggle" type="button" class="toc-toggle" aria-expanded="true" title="收起目录">收起目录</button>
+      <nav id="toc" class="toc"></nav>
+      <div id="tocResizeHandle" class="toc-resize-handle" role="separator" aria-orientation="vertical" aria-label="调整目录宽度"></div>
+    </aside>
+    <article id="reportContent" class="report-content"></article>
+  </main>
+  <script nonce="${nonce}" src="${jsUri}"></script>
+</body>
+</html>`;
+  }
+}

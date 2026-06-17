@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Report Index Tag Browser</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>Report Index Tag Browser</h1>
+        <p id="metaLine">正在读取 report_index.json</p>
+      </div>
+      <div class="top-actions">
+        <button id="themeBtn" type="button" class="theme-button" aria-pressed="false">夜间</button>
+        <button id="helpBtn" type="button" class="help-button" aria-label="打开交互式引导">?</button>
+        <button id="refreshBtn" type="button">刷新</button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <aside class="tag-pane">
+        <div class="pane-head">
+          <h2>Tags</h2>
+          <input id="tagSearchInput" type="search" placeholder="搜索 tag" />
+        </div>
+        <div class="tag-toolbar">
+          <select id="newTagScopeSelect"></select>
+          <input id="newTagInput" type="text" placeholder="新 tag" />
+          <button id="createTagBtn" type="button">新建</button>
+        </div>
+        <div id="tagList" class="tag-list"></div>
+      </aside>
+
+      <section class="game-pane">
+        <div class="pane-head">
+          <div class="pane-title-row">
+            <div>
+              <h2 id="selectedTagTitle">全部游戏</h2>
+              <p id="selectedTagMeta">搜索并选择游戏，或从左侧选择 tag 管理成员。</p>
+              <div id="selectedTagTray" class="selected-tag-tray hidden" aria-label="已选择的 tags"></div>
+            </div>
+            <button id="clearTagBtn" type="button" class="subtle-button hidden">清除 tag</button>
+          </div>
+          <input id="gameSearchInput" type="search" placeholder="搜索游戏、appid、rank" />
+        </div>
+
+        <div id="tagEditBar" class="tag-edit-bar hidden">
+          <input id="renameTagInput" type="text" placeholder="重命名当前 tag" />
+          <button id="renameTagBtn" type="button">重命名</button>
+          <button id="toggleCandidatePanelBtn" type="button">搜索游戏加入当前 tag</button>
+          <button id="deleteTagBtn" type="button" class="danger">删除 tag</button>
+        </div>
+
+        <div id="membershipBar" class="membership-bar hidden">
+          <div class="membership-head">
+            <input id="candidateSearchInput" type="search" placeholder="搜索全部游戏后加入当前 tag" />
+            <button id="addGameToTagBtn" type="button" disabled>加入选中游戏并写回</button>
+            <button id="closeCandidatePanelBtn" type="button">收起</button>
+          </div>
+          <div id="candidateList" class="candidate-list"></div>
+        </div>
+
+        <div id="gameList" class="game-list empty-state">正在读取游戏列表。</div>
+      </section>
+
+      <aside class="detail-pane">
+        <div class="pane-head">
+          <h2>Game Tags</h2>
+          <button id="saveGameBtn" type="button" disabled>保存游戏</button>
+        </div>
+        <div id="gameDetail" class="game-detail empty-state">选择一个游戏后编辑它的检索字段。</div>
+      </aside>
+    </main>
+
+    <div id="toast" class="toast hidden"></div>
+
+    <div id="guideRoot" class="guide-root hidden" aria-hidden="true">
+      <div class="guide-backdrop"></div>
+      <div id="guideHighlight" class="guide-highlight hidden"></div>
+      <section id="guideCard" class="guide-card" role="dialog" aria-modal="true" aria-labelledby="guideStepTitle">
+        <div id="guideCardHead" class="guide-card-head">
+          <div>
+            <p class="guide-chapter" id="guideChapter"></p>
+            <h2 id="guideStepTitle"></h2>
+            <span class="guide-drag-hint">拖动标题栏可移动位置</span>
+          </div>
+          <button id="guideExitBtn" type="button" class="subtle-button">退出引导</button>
+        </div>
+        <p class="guide-sandbox-badge">演示模式 · 本引导中的写操作不会修改数据</p>
+        <p class="guide-body" id="guideStepBody"></p>
+        <p class="guide-hint" id="guideHint"></p>
+        <div class="guide-progress-wrap">
+          <span id="guideProgress"></span>
+          <div class="guide-progress-bar"><span id="guideProgressBar"></span></div>
+        </div>
+        <div class="guide-actions">
+          <button id="guidePrevBtn" type="button">上一步</button>
+          <button id="guideNextBtn" type="button" class="primary" disabled>请先完成操作</button>
+        </div>
+        <details class="guide-chapters">
+          <summary>章节列表</summary>
+          <ul id="guideChapterList"></ul>
+        </details>
+      </section>
+    </div>
+
+    <script src="./guide.js"></script>
+    <script src="./main.js"></script>
+  </body>
+</html>

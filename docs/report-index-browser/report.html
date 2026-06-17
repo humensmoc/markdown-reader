@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Report Viewer</title>
+    <link rel="stylesheet" href="./report.css" />
+  </head>
+  <body>
+    <header class="report-topbar">
+      <div>
+        <h1 id="gameTitle">Report Viewer</h1>
+        <p id="gameMeta">正在读取报告</p>
+      </div>
+      <div class="report-actions">
+        <a class="home-link" href="./">主页</a>
+        <button id="themeBtn" type="button" class="theme-button" aria-pressed="false">夜间</button>
+        <a id="steamLink" class="top-link" href="#" target="_blank" rel="noopener noreferrer">Steam</a>
+      </div>
+    </header>
+
+    <main class="report-layout">
+      <nav id="toc" class="toc"></nav>
+      <article id="reportContent" class="report-content"></article>
+    </main>
+
+    <script src="./report.js"></script>
+  </body>
+</html>
