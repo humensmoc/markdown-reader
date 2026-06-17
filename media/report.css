@@ -1,6 +1,6 @@
 :root {
   color-scheme: light dark;
-  --topbar-height: 38px;
+  --topbar-height: 0px;
   --toc-width: 280px;
   --font-scale: 1;
   --bg: var(--vscode-editor-background);
@@ -140,7 +140,7 @@ body {
 .toc-dock.collapsed {
   position: fixed;
   left: 14px;
-  top: calc(var(--topbar-height) + 10px);
+  top: 10px;
   z-index: 20;
   flex: none;
   width: auto;
@@ -299,8 +299,16 @@ body {
 }
 
 .toc-file-title {
-  color: var(--blue) !important;
   font-weight: 700;
+}
+
+html:not(.rainbow-headings) .toc-file-title,
+html.rainbow-headings.show-toc-numbers .toc-file-title:not(:hover):not(.toc-active) {
+  color: var(--blue);
+}
+
+html.rainbow-headings:not(.show-toc-numbers) .toc-file-title:not(:hover):not(.toc-active) .outline-text {
+  color: #e53935;
 }
 
 .toc-file {
@@ -380,28 +388,88 @@ html.heading-font-scale .report-file > h6 {
   font-size: calc(15px * var(--font-scale));
 }
 
-html.rainbow-headings .report-file > h1 {
+html.rainbow-headings:not(.show-content-numbers) .report-file > h1 .outline-text {
   color: #e53935;
 }
 
-html.rainbow-headings .report-file > h2 {
+html.rainbow-headings:not(.show-content-numbers) .report-file > h2 .outline-text {
   color: #f57c00;
 }
 
-html.rainbow-headings .report-file > h3 {
+html.rainbow-headings:not(.show-content-numbers) .report-file > h3 .outline-text {
   color: #f9a825;
 }
 
-html.rainbow-headings .report-file > h4 {
+html.rainbow-headings:not(.show-content-numbers) .report-file > h4 .outline-text {
   color: #43a047;
 }
 
-html.rainbow-headings .report-file > h5 {
+html.rainbow-headings:not(.show-content-numbers) .report-file > h5 .outline-text {
   color: #00838f;
 }
 
-html.rainbow-headings .report-file > h6 {
+html.rainbow-headings:not(.show-content-numbers) .report-file > h6 .outline-text {
   color: #8e24aa;
+}
+
+html.rainbow-headings.show-content-numbers .report-file > h1 .outline-number {
+  color: #e53935;
+}
+
+html.rainbow-headings.show-content-numbers .report-file > h2 .outline-number {
+  color: #f57c00;
+}
+
+html.rainbow-headings.show-content-numbers .report-file > h3 .outline-number {
+  color: #f9a825;
+}
+
+html.rainbow-headings.show-content-numbers .report-file > h4 .outline-number {
+  color: #43a047;
+}
+
+html.rainbow-headings.show-content-numbers .report-file > h5 .outline-number {
+  color: #00838f;
+}
+
+html.rainbow-headings.show-content-numbers .report-file > h6 .outline-number {
+  color: #8e24aa;
+}
+
+html.rainbow-headings:not(.show-toc-numbers) .toc a.toc-heading.level-1:not(:hover):not(.toc-active) .outline-text {
+  color: #f57c00;
+}
+
+html.rainbow-headings:not(.show-toc-numbers) .toc a.toc-heading.level-2:not(:hover):not(.toc-active) .outline-text {
+  color: #f9a825;
+}
+
+html.rainbow-headings:not(.show-toc-numbers) .toc a.toc-heading.level-3:not(:hover):not(.toc-active) .outline-text {
+  color: #43a047;
+}
+
+html.rainbow-headings:not(.show-toc-numbers) .toc a.toc-heading.level-4:not(:hover):not(.toc-active) .outline-text {
+  color: #00838f;
+}
+
+html.rainbow-headings.show-toc-numbers .toc a.toc-file-title:not(:hover):not(.toc-active) .outline-number {
+  color: #e53935;
+}
+
+html.rainbow-headings.show-toc-numbers .toc a.toc-heading.level-1:not(:hover):not(.toc-active) .outline-number {
+  color: #f57c00;
+}
+
+html.rainbow-headings.show-toc-numbers .toc a.toc-heading.level-2:not(:hover):not(.toc-active) .outline-number {
+  color: #f9a825;
+}
+
+html.rainbow-headings.show-toc-numbers .toc a.toc-heading.level-3:not(:hover):not(.toc-active) .outline-number {
+  color: #43a047;
+}
+
+html.rainbow-headings.show-toc-numbers .toc a.toc-heading.level-4:not(:hover):not(.toc-active) .outline-number {
+  color: #00838f;
 }
 
 p {
@@ -432,6 +500,134 @@ p {
 .list-body {
   min-width: 0;
   flex: 1 1 auto;
+}
+
+.task-line .task-marker {
+  min-width: 22px;
+  text-align: left;
+}
+
+.task-checkbox {
+  margin: 0;
+  accent-color: var(--blue);
+  vertical-align: middle;
+}
+
+.markdown-blockquote {
+  margin: 14px 0;
+  padding: 10px 14px;
+  border-left: 4px solid var(--blue);
+  background: color-mix(in srgb, var(--blue) 8%, transparent);
+  color: var(--text);
+}
+
+.markdown-blockquote p {
+  margin: 6px 0;
+}
+
+.markdown-blockquote p:first-child {
+  margin-top: 0;
+}
+
+.markdown-blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-dl {
+  margin: 12px 0 16px;
+}
+
+.markdown-dl dt {
+  margin: 10px 0 4px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.markdown-dl dd {
+  margin: 0 0 6px 18px;
+  line-height: 1.7;
+}
+
+del,
+s {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.footnote-ref a {
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.footnotes {
+  margin-top: 28px;
+  padding-top: 8px;
+  color: var(--muted);
+  font-size: 0.92em;
+}
+
+.footnotes hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 0 0 12px;
+}
+
+.footnote-list {
+  margin: 0;
+  padding-left: 22px;
+}
+
+.footnote-list li {
+  margin: 6px 0;
+  line-height: 1.65;
+}
+
+.footnote-backref {
+  margin-left: 4px;
+  text-decoration: none;
+  color: var(--blue);
+}
+
+.report-content mark {
+  background: color-mix(in srgb, #f9a825 35%, transparent);
+  color: inherit;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+.report-content kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--paper-strong);
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.88em;
+}
+
+.report-content details {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper-strong);
+}
+
+.report-content summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--blue);
+}
+
+.report-content details[open] summary {
+  margin-bottom: 8px;
+}
+
+.report-content sup,
+.report-content sub {
+  font-size: 0.78em;
+  line-height: 0;
 }
 
 .sources-title {

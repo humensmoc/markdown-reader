@@ -1,7 +1,5 @@
 const vscode = typeof acquireVsCodeApi === "function" ? acquireVsCodeApi() : null;
 
-const gameTitle = document.getElementById("gameTitle");
-const gameMeta = document.getElementById("gameMeta");
 const reportLayout = document.getElementById("reportLayout");
 const tocDock = document.getElementById("tocDock");
 const tocToggle = document.getElementById("tocToggle");
@@ -138,11 +136,13 @@ function initReaderSettings() {
   showTocNumbersInput?.addEventListener("change", () => {
     readerSettings.showTocNumbers = Boolean(showTocNumbersInput.checked);
     saveReaderSettings();
+    applyReaderSettings();
     refreshOutlineLabels();
   });
   showContentNumbersInput?.addEventListener("change", () => {
     readerSettings.showContentNumbers = Boolean(showContentNumbersInput.checked);
     saveReaderSettings();
+    applyReaderSettings();
     refreshOutlineLabels();
   });
   headingFontScaleInput?.addEventListener("change", () => {
@@ -231,6 +231,8 @@ function applyReaderSettings() {
   document.documentElement.style.setProperty("--font-scale", String(readerSettings.fontScale));
   document.documentElement.classList.toggle("heading-font-scale", readerSettings.headingFontScale);
   document.documentElement.classList.toggle("rainbow-headings", readerSettings.rainbowHeadingColors);
+  document.documentElement.classList.toggle("show-content-numbers", readerSettings.showContentNumbers);
+  document.documentElement.classList.toggle("show-toc-numbers", readerSettings.showTocNumbers);
 }
 
 function updateReaderSettingsUi() {
@@ -257,25 +259,44 @@ function formatFontScaleLabel(scale) {
   return `${Math.round(scale * 100)}%`;
 }
 
-function getOutlineLabel(outlineNumber, text, scope) {
-  const showNumbers = scope === "toc" ? readerSettings.showTocNumbers : readerSettings.showContentNumbers;
-  if (!showNumbers) {
-    return String(text || "").trim();
-  }
-  return formatOutlineLabel(outlineNumber, text);
+function formatOutlineNumber(number) {
+  const outline = String(number || "").trim();
+  if (!outline) return "";
+  return outline.includes(".") ? `${outline} ` : `${outline}. `;
 }
 
 function setOutlineLabel(element, outlineNumber, text, scope) {
   element.dataset.outlineNumber = String(outlineNumber || "");
   element.dataset.outlineText = String(text || "");
   element.dataset.outlineScope = scope;
-  element.textContent = getOutlineLabel(outlineNumber, text, scope);
+  element.replaceChildren();
+
+  const showNumbers = scope === "toc" ? readerSettings.showTocNumbers : readerSettings.showContentNumbers;
+  const label = String(text || "").trim();
+
+  if (showNumbers && outlineNumber) {
+    const numberSpan = document.createElement("span");
+    numberSpan.className = "outline-number";
+    numberSpan.textContent = formatOutlineNumber(outlineNumber);
+
+    const textSpan = document.createElement("span");
+    textSpan.className = "outline-text";
+    textSpan.textContent = label;
+
+    element.append(numberSpan, textSpan);
+    return;
+  }
+
+  const textSpan = document.createElement("span");
+  textSpan.className = "outline-text";
+  textSpan.textContent = label;
+  element.appendChild(textSpan);
 }
 
 function refreshOutlineLabels() {
   for (const node of document.querySelectorAll("[data-outline-text]")) {
     const scope = node.dataset.outlineScope === "toc" ? "toc" : "content";
-    node.textContent = getOutlineLabel(node.dataset.outlineNumber, node.dataset.outlineText, scope);
+    setOutlineLabel(node, node.dataset.outlineNumber, node.dataset.outlineText, scope);
   }
 }
 
@@ -560,9 +581,6 @@ function createTocLink(className, anchorId, outlineNumber, text, level = 0) {
 }
 
 function renderReport(payload) {
-  gameTitle.textContent = payload?.title || "Report Markdown Viewer";
-  gameMeta.textContent = payload?.meta || "";
-  gameMeta.hidden = !payload?.meta;
   document.title = payload?.title || "Report Markdown Viewer";
 
   toc.innerHTML = "";
@@ -705,10 +723,416 @@ function withOutlineNumbers(file, fileNumber) {
   };
 }
 
+function preprocessMarkdownContent(content) {
+  const footnotes = new Map();
+  const bodyLines = [];
+  const rawLines = normalizeMarkdownLines(content);
+
+  for (let index = 0; index < rawLines.length; index += 1) {
+    const line = rawLines[index];
+    const match = /^\[\^([^\]]+)\]:\s*(.*)$/.exec(String(line || "").trim());
+    if (!match) {
+      bodyLines.push(line);
+      continue;
+    }
+
+    const id = match[1].trim().toLowerCase();
+    let text = match[2].trim();
+    while (index + 1 < rawLines.length && /^(?: {4,}|\t)/.test(rawLines[index + 1])) {
+      index += 1;
+      text += ` ${String(rawLines[index] || "").trim()}`;
+    }
+    footnotes.set(id, text);
+  }
+
+  return { lines: bodyLines, footnotes };
+}
+
+function parseBlockquote(lines, startIndex) {
+  const parts = [];
+  let index = startIndex;
+
+  while (index < lines.length) {
+    const match = /^\s*>\s?(.*)$/.exec(lines[index]);
+    if (!match) break;
+    if (!match[1].trim() && parts.length) {
+      parts.push("");
+    } else if (match[1].trim()) {
+      parts.push(match[1].trim());
+    }
+    index += 1;
+  }
+
+  return { parts, nextIndex: index };
+}
+
+function parseDefinitionList(lines, startIndex) {
+  const items = [];
+  let index = startIndex;
+  let term = String(lines[index] || "").trim();
+  let definitions = [];
+
+  while (index < lines.length) {
+    if (!term) break;
+
+    const firstDef = /^\s*:\s+(.+)$/.exec(lines[index + 1] || "");
+    if (!firstDef) {
+      if (items.length) break;
+      return null;
+    }
+
+    definitions = [firstDef[1].trim()];
+    index += 2;
+
+    while (index < lines.length) {
+      const defLine = /^\s*:\s+(.+)$/.exec(lines[index]);
+      if (defLine) {
+        definitions.push(defLine[1].trim());
+        index += 1;
+        continue;
+      }
+      if (!String(lines[index] || "").trim()) break;
+
+      const nextDef = /^\s*:\s+(.+)$/.exec(lines[index + 1] || "");
+      if (!nextDef) break;
+
+      items.push({ term, definitions });
+      term = String(lines[index] || "").trim();
+      definitions = [nextDef[1].trim()];
+      index += 2;
+    }
+
+    items.push({ term, definitions });
+
+    if (index >= lines.length || !String(lines[index] || "").trim()) break;
+    if (!/^\s*:\s+/.test(lines[index + 1] || "")) break;
+
+    term = String(lines[index] || "").trim();
+    definitions = [];
+  }
+
+  return { items, nextIndex: index };
+}
+
+function isHtmlBlockLine(line) {
+  const trimmed = String(line || "").trim();
+  if (!trimmed.startsWith("<") || !trimmed.endsWith(">")) return false;
+  if (trimmed.startsWith("<!--")) return true;
+  return /^<[a-z][a-z0-9]*(?:\s|\/?>)/i.test(trimmed);
+}
+
+function renderBlockquote(parts, context) {
+  const blockquote = document.createElement("blockquote");
+  blockquote.className = "markdown-blockquote";
+  const chunks = [];
+  let current = [];
+
+  for (const part of parts) {
+    if (!part) {
+      if (current.length) {
+        chunks.push(current);
+        current = [];
+      }
+      continue;
+    }
+    current.push(part);
+  }
+  if (current.length) chunks.push(current);
+
+  for (const group of chunks) {
+    for (const line of group) {
+      const task = /^\s*[-*+]\s+\[([ xX])\]\s+(.+)$/.exec(line);
+      if (task) {
+        blockquote.appendChild(renderTaskListItem(task[1].toLowerCase() === "x", task[2].trim(), context));
+        continue;
+      }
+
+      const unordered = /^\s*[-*+]\s+(.+)$/.exec(line);
+      if (unordered) {
+        const item = document.createElement("p");
+        item.className = "list-line unordered-line";
+        const marker = document.createElement("span");
+        marker.className = "list-marker";
+        marker.textContent = "•";
+        const body = document.createElement("span");
+        body.className = "list-body";
+        appendInlineMarkdown(body, unordered[1].trim(), context);
+        item.append(marker, body);
+        blockquote.appendChild(item);
+        continue;
+      }
+
+      const p = document.createElement("p");
+      appendInlineMarkdown(p, line, context);
+      blockquote.appendChild(p);
+    }
+  }
+
+  return blockquote;
+}
+
+function renderDefinitionList(items, context) {
+  const dl = document.createElement("dl");
+  dl.className = "markdown-dl";
+
+  for (const item of items) {
+    const dt = document.createElement("dt");
+    appendInlineMarkdown(dt, item.term, context);
+    dl.appendChild(dt);
+    for (const definition of item.definitions) {
+      const dd = document.createElement("dd");
+      appendInlineMarkdown(dd, definition, context);
+      dl.appendChild(dd);
+    }
+  }
+
+  return dl;
+}
+
+function renderTaskListItem(checked, bodyText, context) {
+  const item = document.createElement("p");
+  item.className = "list-line task-line";
+
+  const marker = document.createElement("span");
+  marker.className = "list-marker task-marker";
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.disabled = true;
+  checkbox.checked = checked;
+  checkbox.className = "task-checkbox";
+  marker.appendChild(checkbox);
+
+  const body = document.createElement("span");
+  body.className = "list-body";
+  appendInlineMarkdown(body, bodyText, context);
+  item.append(marker, body);
+  return item;
+}
+
+function renderFootnoteRef(id, context) {
+  const key = String(id || "").trim().toLowerCase();
+  if (!context.footnotes?.has(key)) return null;
+
+  if (!context.footnoteIndex) context.footnoteIndex = new Map();
+  if (!context.footnoteRefs) context.footnoteRefs = [];
+
+  let number = context.footnoteIndex.get(key);
+  if (!number) {
+    number = context.footnoteRefs.length + 1;
+    context.footnoteIndex.set(key, number);
+    context.footnoteRefs.push(key);
+  }
+
+  const sup = document.createElement("sup");
+  sup.className = "footnote-ref";
+  const link = document.createElement("a");
+  link.href = `#fn-${context.fileKey}-${number}`;
+  link.id = `fnref-${context.fileKey}-${number}`;
+  link.dataset.anchor = `fn-${context.fileKey}-${number}`;
+  link.textContent = String(number);
+  sup.appendChild(link);
+  return sup;
+}
+
+function renderFootnotesSection(context) {
+  if (!context.footnoteRefs?.length) return null;
+
+  const section = document.createElement("section");
+  section.className = "footnotes";
+  section.appendChild(document.createElement("hr"));
+
+  const list = document.createElement("ol");
+  list.className = "footnote-list";
+
+  for (const key of context.footnoteRefs) {
+    const number = context.footnoteIndex.get(key);
+    const item = document.createElement("li");
+    item.id = `fn-${context.fileKey}-${number}`;
+    appendInlineMarkdown(item, context.footnotes.get(key), {
+      ...context,
+      disableCitations: true
+    });
+
+    const back = document.createElement("a");
+    back.href = `#fnref-${context.fileKey}-${number}`;
+    back.dataset.anchor = `fnref-${context.fileKey}-${number}`;
+    back.className = "footnote-backref";
+    back.textContent = " ↩";
+    item.appendChild(back);
+    list.appendChild(item);
+  }
+
+  section.appendChild(list);
+  return section;
+}
+
+const HTML_ALLOWED_TAGS = new Set([
+  "a",
+  "abbr",
+  "b",
+  "blockquote",
+  "br",
+  "code",
+  "dd",
+  "del",
+  "details",
+  "div",
+  "dl",
+  "dt",
+  "em",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "hr",
+  "i",
+  "ins",
+  "kbd",
+  "li",
+  "mark",
+  "ol",
+  "p",
+  "pre",
+  "s",
+  "small",
+  "span",
+  "strong",
+  "sub",
+  "summary",
+  "sup",
+  "table",
+  "tbody",
+  "td",
+  "th",
+  "thead",
+  "tr",
+  "u",
+  "ul"
+]);
+
+const HTML_FORBIDDEN_TAGS = new Set([
+  "script",
+  "style",
+  "iframe",
+  "object",
+  "embed",
+  "form",
+  "input",
+  "textarea",
+  "select",
+  "button",
+  "link",
+  "meta",
+  "base",
+  "svg"
+]);
+
+const HTML_ALLOWED_ATTRS = {
+  "*": ["class", "id", "title"],
+  a: ["href"],
+  td: ["colspan", "rowspan"],
+  th: ["colspan", "rowspan"]
+};
+
+function appendSafeHtmlBlock(parent, html) {
+  parent.appendChild(sanitizeHtmlToFragment(html));
+}
+
+function sanitizeHtmlToFragment(html) {
+  const template = document.createElement("template");
+  template.innerHTML = String(html || "");
+  const fragment = document.createDocumentFragment();
+
+  for (const child of [...template.content.childNodes]) {
+    const clean = sanitizeHtmlNode(child);
+    if (!clean) continue;
+    if (clean.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
+      fragment.appendChild(clean);
+    } else {
+      fragment.appendChild(clean);
+    }
+  }
+
+  return fragment;
+}
+
+function sanitizeHtmlNode(node) {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return document.createTextNode(node.textContent);
+  }
+  if (node.nodeType !== Node.ELEMENT_NODE) return null;
+
+  const tag = node.tagName.toLowerCase();
+  if (HTML_FORBIDDEN_TAGS.has(tag)) return null;
+
+  if (!HTML_ALLOWED_TAGS.has(tag)) {
+    const fragment = document.createDocumentFragment();
+    for (const child of [...node.childNodes]) {
+      const clean = sanitizeHtmlNode(child);
+      if (clean) fragment.appendChild(clean);
+    }
+    return fragment;
+  }
+
+  const element = document.createElement(tag);
+  const allowed = new Set([
+    ...(HTML_ALLOWED_ATTRS["*"] || []),
+    ...(HTML_ALLOWED_ATTRS[tag] || [])
+  ]);
+
+  for (const attribute of [...node.attributes]) {
+    const name = attribute.name.toLowerCase();
+    if (name.startsWith("on")) continue;
+    if (!allowed.has(name)) continue;
+    const value = attribute.value;
+    if (name === "href" && !value.startsWith("#") && !isSafeHref(value)) continue;
+    element.setAttribute(name, value);
+  }
+
+  for (const child of [...node.childNodes]) {
+    const clean = sanitizeHtmlNode(child);
+    if (clean) element.appendChild(clean);
+  }
+
+  return element;
+}
+
+function tryParseInlineHtml(value, start) {
+  const slice = value.slice(start);
+  const selfClosing = /^<(br|hr|wbr)\s*\/?>/i.exec(slice);
+  if (selfClosing) {
+    return { html: selfClosing[0], nextIndex: start + selfClosing[0].length };
+  }
+
+  const open = /^<([a-z][a-z0-9]*)\b([^>]*)>/i.exec(slice);
+  if (!open) return null;
+
+  const tag = open[1].toLowerCase();
+  if (!HTML_ALLOWED_TAGS.has(tag)) return null;
+
+  const openEnd = start + open[0].length;
+  const closeTag = `</${tag}>`;
+  const closeIndex = value.toLowerCase().indexOf(closeTag, openEnd);
+  if (closeIndex === -1) return null;
+
+  return {
+    html: value.slice(start, closeIndex + closeTag.length),
+    nextIndex: closeIndex + closeTag.length
+  };
+}
+
 function renderMarkdown(content, file) {
   const fragment = document.createDocumentFragment();
-  const lines = normalizeMarkdownLines(content);
-  const context = { fileKey: slugify(file.name) };
+  const preprocessed = preprocessMarkdownContent(content);
+  const lines = preprocessed.lines;
+  const context = {
+    fileKey: slugify(file.name),
+    footnotes: preprocessed.footnotes,
+    footnoteIndex: new Map(),
+    footnoteRefs: []
+  };
   let paragraph = [];
   let inCode = false;
   let codeLines = [];
@@ -738,7 +1162,8 @@ function renderMarkdown(content, file) {
     codeLines = [];
   }
 
-  for (const line of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex];
     if (/^```/.test(line)) {
       flushParagraph();
       flushTable();
@@ -775,7 +1200,10 @@ function renderMarkdown(content, file) {
       if (outlineNumber) {
         setOutlineLabel(h, outlineNumber, cleanText, "content");
       } else {
-        h.textContent = cleanText;
+        const textSpan = document.createElement("span");
+        textSpan.className = "outline-text";
+        textSpan.textContent = cleanText;
+        h.appendChild(textSpan);
       }
       h.id = numberedHeading?.anchor || makeFallbackAnchor(file.name, headingIndex, cleanText);
       headingIndex += 1;
@@ -785,6 +1213,37 @@ function renderMarkdown(content, file) {
     if (!line.trim()) {
       flushParagraph();
       flushTable();
+      continue;
+    }
+    if (/^\s*>/.test(line)) {
+      flushParagraph();
+      flushTable();
+      const blockquote = parseBlockquote(lines, lineIndex);
+      fragment.appendChild(renderBlockquote(blockquote.parts, context));
+      lineIndex = blockquote.nextIndex - 1;
+      continue;
+    }
+    if (isHtmlBlockLine(line)) {
+      flushParagraph();
+      flushTable();
+      appendSafeHtmlBlock(fragment, line.trim());
+      continue;
+    }
+    if (lineIndex + 1 < lines.length && /^\s*:\s+/.test(lines[lineIndex + 1])) {
+      const definitionList = parseDefinitionList(lines, lineIndex);
+      if (definitionList?.items?.length) {
+        flushParagraph();
+        flushTable();
+        fragment.appendChild(renderDefinitionList(definitionList.items, context));
+        lineIndex = definitionList.nextIndex - 1;
+        continue;
+      }
+    }
+    const task = /^\s*[-*+]\s+\[([ xX])\]\s+(.+)$/.exec(line);
+    if (task) {
+      flushParagraph();
+      flushTable();
+      fragment.appendChild(renderTaskListItem(task[1].toLowerCase() === "x", task[2].trim(), context));
       continue;
     }
     const unordered = /^\s*[-*+]\s+(.+)$/.exec(line);
@@ -810,6 +1269,10 @@ function renderMarkdown(content, file) {
   flushParagraph();
   flushTable();
   if (inCode) flushCode();
+
+  const footnotesSection = renderFootnotesSection(context);
+  if (footnotesSection) fragment.appendChild(footnotesSection);
+
   return fragment;
 }
 
@@ -873,13 +1336,6 @@ function stripOutlinePrefix(text) {
     .replace(/^\s*(?:第[一二三四五六七八九十百\d]+[章节部分篇]\s*[：:、.-]?\s*)/, "")
     .replace(/^\s*(?:\d+(?:\.\d+)+|\d+[.、])\s*/, "")
     .trim();
-}
-
-function formatOutlineLabel(number, text) {
-  const label = String(text || "").trim();
-  const outline = String(number || "").trim();
-  if (!outline) return label;
-  return outline.includes(".") ? `${outline} ${label}` : `${outline}. ${label}`;
 }
 
 function parseTableRow(line) {
@@ -955,6 +1411,16 @@ function renderInlineMarkdown(text, context = {}) {
       continue;
     }
 
+    const footnote = /^\[\^([^\]]+)\]/.exec(value.slice(linkStart));
+    if (footnote) {
+      const ref = renderFootnoteRef(footnote[1], context);
+      if (ref) {
+        fragment.appendChild(ref);
+        cursor = linkStart + footnote[0].length;
+        continue;
+      }
+    }
+
     const labelEnd = value.indexOf("]", linkStart + 1);
     if (labelEnd === -1 || value[labelEnd + 1] !== "(") {
       appendInlineText(fragment, value.slice(linkStart, linkStart + 1));
@@ -1005,7 +1471,32 @@ function findNextInlineLinkStart(value, start) {
 function appendInlineText(parent, text) {
   const value = String(text || "");
   if (!value) return;
-  const parts = value.split(/(`[^`]+`|\*\*[^*]+\*\*|\*[^*\s][^*]*\*)/g);
+
+  let cursor = 0;
+  while (cursor < value.length) {
+    const tagStart = value.indexOf("<", cursor);
+    if (tagStart === -1) {
+      appendInlineFormatting(parent, value.slice(cursor));
+      break;
+    }
+
+    appendInlineFormatting(parent, value.slice(cursor, tagStart));
+    const parsed = tryParseInlineHtml(value, tagStart);
+    if (!parsed) {
+      appendInlineFormatting(parent, value.slice(tagStart, tagStart + 1));
+      cursor = tagStart + 1;
+      continue;
+    }
+
+    parent.appendChild(sanitizeHtmlToFragment(parsed.html));
+    cursor = parsed.nextIndex;
+  }
+}
+
+function appendInlineFormatting(parent, text) {
+  const value = String(text || "");
+  if (!value) return;
+  const parts = value.split(/(`[^`]+`|\*\*[^*]+\*\*|\*[^*\s][^*]*\*|~~[^~]+~~)/g);
   for (const part of parts) {
     if (!part) continue;
     if (part.startsWith("`") && part.endsWith("`") && part.length > 1) {
@@ -1014,12 +1505,16 @@ function appendInlineText(parent, text) {
       parent.appendChild(code);
     } else if (part.startsWith("**") && part.endsWith("**") && part.length > 3) {
       const strong = document.createElement("strong");
-      strong.textContent = part.slice(2, -2);
+      appendInlineFormatting(strong, part.slice(2, -2));
       parent.appendChild(strong);
     } else if (part.startsWith("*") && part.endsWith("*") && part.length > 2) {
       const em = document.createElement("em");
-      em.textContent = part.slice(1, -1);
+      appendInlineFormatting(em, part.slice(1, -1));
       parent.appendChild(em);
+    } else if (part.startsWith("~~") && part.endsWith("~~") && part.length > 3) {
+      const del = document.createElement("del");
+      appendInlineFormatting(del, part.slice(2, -2));
+      parent.appendChild(del);
     } else {
       appendTextWithBareUrls(parent, part);
     }
@@ -1258,9 +1753,7 @@ function isSafeHref(href) {
 }
 
 function renderError(message) {
-  gameTitle.textContent = "Report Markdown Viewer";
-  gameMeta.textContent = message;
-  gameMeta.hidden = false;
+  document.title = "Report Markdown Viewer";
   reportContent.innerHTML = "";
   const error = document.createElement("div");
   error.className = "error-box";

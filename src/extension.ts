@@ -360,12 +360,6 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
   <title>Report Markdown Viewer</title>
 </head>
 <body>
-  <header class="report-topbar">
-    <div class="report-topbar-main">
-      <h1 id="gameTitle">Report Markdown Viewer</h1>
-      <p id="gameMeta"></p>
-    </div>
-  </header>
   <main id="reportLayout" class="report-layout layout-toc-open">
     <aside id="tocDock" class="toc-dock" aria-label="文档目录">
       <button id="tocToggle" type="button" class="toc-toggle" aria-expanded="true" title="收起目录">收起目录</button>
