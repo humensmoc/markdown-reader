@@ -62,6 +62,8 @@ window.addEventListener("message", (event) => {
 
 document.addEventListener("click", handleReportClick);
 document.addEventListener("click", handleReaderSettingsOutsideClick);
+document.addEventListener("click", handleMermaidModalClick);
+document.addEventListener("keydown", handleMermaidModalKeydown);
 
 if (vscode) {
   postReadySignal();
@@ -583,6 +585,7 @@ function createTocLink(className, anchorId, outlineNumber, text, level = 0) {
 function renderReport(payload) {
   document.title = payload?.title || "Report Markdown Viewer";
 
+  closeMermaidModal();
   toc.innerHTML = "";
   reportContent.innerHTML = "";
   activeCitation = null;
@@ -603,6 +606,7 @@ function renderReport(payload) {
   }
   toc.appendChild(tocInner);
   updateActiveToc();
+  void hydrateMermaid(reportContent);
 }
 
 function createFileToc(file) {
@@ -1135,6 +1139,7 @@ function renderMarkdown(content, file) {
   };
   let paragraph = [];
   let inCode = false;
+  let codeLang = "";
   let codeLines = [];
   let tableRows = [];
   let headingIndex = 0;
@@ -1154,11 +1159,34 @@ function renderMarkdown(content, file) {
   }
 
   function flushCode() {
-    const pre = document.createElement("pre");
-    const code = document.createElement("code");
-    code.textContent = codeLines.join("\n");
-    pre.appendChild(code);
-    fragment.appendChild(pre);
+    const source = codeLines.join("\n");
+    if (codeLang === "mermaid") {
+      const block = document.createElement("div");
+      block.className = "mermaid-block";
+      block.dataset.mermaidSource = source;
+
+      const toolbar = document.createElement("div");
+      toolbar.className = "mermaid-toolbar";
+      const expandBtn = document.createElement("button");
+      expandBtn.type = "button";
+      expandBtn.className = "mermaid-expand-btn";
+      expandBtn.title = "全屏查看";
+      expandBtn.setAttribute("aria-label", "全屏查看");
+      expandBtn.innerHTML =
+        '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M3 3h3.5V4H4v2.5H3V3Zm10 0v3.5h-1V4h-2.5V3H13ZM3 13v-3.5h1V12h2.5v1H3Zm10 0h-3.5v-1H12v-2.5h1V13Z"/></svg>';
+      toolbar.appendChild(expandBtn);
+
+      const content = document.createElement("div");
+      content.className = "mermaid-content";
+      block.append(toolbar, content);
+      fragment.appendChild(block);
+    } else {
+      const pre = document.createElement("pre");
+      const code = document.createElement("code");
+      code.textContent = source;
+      pre.appendChild(code);
+      fragment.appendChild(pre);
+    }
     codeLines = [];
   }
 
@@ -1167,7 +1195,13 @@ function renderMarkdown(content, file) {
     if (/^```/.test(line)) {
       flushParagraph();
       flushTable();
-      if (inCode) flushCode();
+      if (inCode) {
+        flushCode();
+        codeLang = "";
+      } else {
+        const open = /^```([^\s`]*)/.exec(line.trim());
+        codeLang = open && open[1] ? open[1].toLowerCase() : "";
+      }
       inCode = !inCode;
       continue;
     }
@@ -1274,6 +1308,191 @@ function renderMarkdown(content, file) {
   if (footnotesSection) fragment.appendChild(footnotesSection);
 
   return fragment;
+}
+
+async function hydrateMermaid(root) {
+  const blocks = root.querySelectorAll(".mermaid-block[data-mermaid-source]");
+  if (!blocks.length || typeof mermaid === "undefined") {
+    return;
+  }
+
+  if (!window.__mermaidInitialized) {
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: "strict",
+      theme: document.body.classList.contains("vscode-dark") ? "dark" : "default",
+      fontFamily: "var(--vscode-font-family)"
+    });
+    window.__mermaidInitialized = true;
+  }
+
+  ensureMermaidModal();
+
+  for (const block of blocks) {
+    const source = block.dataset.mermaidSource || "";
+    const content = block.querySelector(".mermaid-content");
+    if (!content) {
+      continue;
+    }
+
+    try {
+      const id = `mermaid-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      const { svg, bindFunctions } = await mermaid.render(id, source);
+      const wrapper = document.createElement("div");
+      wrapper.className = "mermaid-svg-root";
+      wrapper.innerHTML = svg;
+      bindFunctions?.(wrapper);
+      content.replaceChildren(wrapper);
+      block.classList.add("mermaid-rendered");
+    } catch (err) {
+      showMermaidError(block, source, err);
+    }
+  }
+}
+
+function showMermaidError(block, source, err) {
+  block.classList.remove("mermaid-rendered");
+  block.classList.add("mermaid-failed");
+  const content = block.querySelector(".mermaid-content");
+  if (!content) {
+    return;
+  }
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "mermaid-error";
+  const message = document.createElement("p");
+  message.className = "mermaid-error-message";
+  message.textContent = `Mermaid 渲染失败：${err?.message || String(err)}`;
+  const sourcePre = document.createElement("pre");
+  sourcePre.className = "mermaid-error-source";
+  sourcePre.textContent = source;
+  wrapper.append(message, sourcePre);
+  content.replaceChildren(wrapper);
+}
+
+let mermaidModalState = null;
+
+function ensureMermaidModal() {
+  if (document.getElementById("mermaidModal")) {
+    return;
+  }
+
+  const modal = document.createElement("div");
+  modal.id = "mermaidModal";
+  modal.className = "mermaid-modal";
+  modal.hidden = true;
+  modal.innerHTML = `
+    <div class="mermaid-modal-backdrop" data-mermaid-action="close"></div>
+    <div class="mermaid-modal-panel" role="dialog" aria-modal="true" aria-label="Mermaid 全屏预览">
+      <div class="mermaid-modal-toolbar">
+        <button type="button" class="mermaid-modal-btn" data-mermaid-action="zoom-in" title="放大" aria-label="放大">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M7 4h2v3h3v2H9v3H7V9H4V7h3V4Z"/></svg>
+        </button>
+        <button type="button" class="mermaid-modal-btn" data-mermaid-action="zoom-out" title="缩小" aria-label="缩小">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M4 7h8v2H4V7Z"/></svg>
+        </button>
+        <button type="button" class="mermaid-modal-btn" data-mermaid-action="zoom-reset" title="重置缩放" aria-label="重置缩放">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 3a5 5 0 1 0 4.9 6h-1.8A3.2 3.2 0 1 1 8 4.7V7h4l-5 5-5-5h4V3Z"/></svg>
+        </button>
+        <button type="button" class="mermaid-modal-btn" data-mermaid-action="close" title="关闭" aria-label="关闭">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M4.1 3 8 6.9 11.9 3 13 4.1 9.1 8 13 11.9 11.9 13 8 9.1 4.1 13 3 11.9 6.9 8 3 4.1Z"/></svg>
+        </button>
+      </div>
+      <div class="mermaid-modal-viewport">
+        <div class="mermaid-modal-content"></div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+}
+
+function openMermaidModal(block) {
+  const svgRoot = block.querySelector(".mermaid-svg-root svg");
+  if (!svgRoot) {
+    return;
+  }
+
+  ensureMermaidModal();
+  const modal = document.getElementById("mermaidModal");
+  const content = modal?.querySelector(".mermaid-modal-content");
+  if (!modal || !content) {
+    return;
+  }
+
+  content.replaceChildren(svgRoot.cloneNode(true));
+  mermaidModalState = { scale: 1 };
+  applyMermaidModalScale(content);
+  modal.hidden = false;
+  document.body.classList.add("mermaid-modal-open");
+  modal.querySelector('[data-mermaid-action="close"]')?.focus();
+}
+
+function closeMermaidModal() {
+  const modal = document.getElementById("mermaidModal");
+  if (!modal || modal.hidden) {
+    return;
+  }
+
+  modal.hidden = true;
+  document.body.classList.remove("mermaid-modal-open");
+  modal.querySelector(".mermaid-modal-content")?.replaceChildren();
+  mermaidModalState = null;
+}
+
+function applyMermaidModalScale(contentEl) {
+  if (!contentEl || !mermaidModalState) {
+    return;
+  }
+  contentEl.style.transform = `scale(${mermaidModalState.scale})`;
+}
+
+function handleMermaidModalClick(event) {
+  const expandBtn = event.target.closest(".mermaid-expand-btn");
+  if (expandBtn) {
+    const block = expandBtn.closest(".mermaid-block.mermaid-rendered");
+    if (block) {
+      event.preventDefault();
+      openMermaidModal(block);
+    }
+    return;
+  }
+
+  const actionBtn = event.target.closest("[data-mermaid-action]");
+  if (!actionBtn || !actionBtn.closest("#mermaidModal")) {
+    return;
+  }
+
+  const action = actionBtn.getAttribute("data-mermaid-action");
+  const modal = document.getElementById("mermaidModal");
+  const content = modal?.querySelector(".mermaid-modal-content");
+  if (!modal || modal.hidden || !content) {
+    return;
+  }
+
+  if (action === "close") {
+    closeMermaidModal();
+    return;
+  }
+
+  if (!mermaidModalState) {
+    return;
+  }
+
+  if (action === "zoom-in") {
+    mermaidModalState.scale = Math.min(mermaidModalState.scale + 0.2, 4);
+  } else if (action === "zoom-out") {
+    mermaidModalState.scale = Math.max(mermaidModalState.scale - 0.2, 0.4);
+  } else if (action === "zoom-reset") {
+    mermaidModalState.scale = 1;
+  }
+  applyMermaidModalScale(content);
+}
+
+function handleMermaidModalKeydown(event) {
+  if (event.key !== "Escape") {
+    return;
+  }
+  closeMermaidModal();
 }
 
 function normalizeMarkdownLines(content) {

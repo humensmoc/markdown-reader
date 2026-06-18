@@ -1,0 +1,8 @@
+node_modules/**
+src/**
+.git/**
+.cursor/**
+docs/**
+*.ts
+tsconfig.json
+**/.DS_Store

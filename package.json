@@ -61,9 +61,13 @@
   },
   "main": "./out/extension.js",
   "scripts": {
-    "compile": "tsc -p ./",
+    "copy-mermaid": "node -e \"require('fs').copyFileSync('node_modules/mermaid/dist/mermaid.min.js','media/mermaid.min.js')\"",
+    "compile": "tsc -p ./ && npm run copy-mermaid",
     "watch": "tsc -watch -p ./",
     "package": "vsce package"
+  },
+  "dependencies": {
+    "mermaid": "^11.4.0"
   },
   "devDependencies": {
     "@types/node": "^20.17.57",

@@ -765,6 +765,185 @@ pre code {
   padding: 0;
 }
 
+.mermaid-block {
+  position: relative;
+  overflow: auto;
+  margin: 1em 0;
+  padding: 12px;
+  background: var(--paper-strong);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.mermaid-content {
+  display: flex;
+  justify-content: center;
+  min-height: 48px;
+}
+
+.mermaid-toolbar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.mermaid-block.mermaid-rendered:hover .mermaid-toolbar,
+.mermaid-block.mermaid-rendered:focus-within .mermaid-toolbar {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.mermaid-expand-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--paper-strong) 88%, transparent);
+  color: var(--muted);
+  cursor: pointer;
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--vscode-widget-shadow, #000) 20%, transparent);
+}
+
+.mermaid-expand-btn:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+  background: var(--paper);
+}
+
+.mermaid-expand-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.mermaid-block svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.mermaid-failed .mermaid-toolbar {
+  display: none;
+}
+
+.mermaid-error {
+  width: 100%;
+  border: 1px solid color-mix(in srgb, var(--vscode-errorForeground) 55%, transparent);
+  background: color-mix(in srgb, var(--vscode-errorForeground) 12%, transparent);
+  color: var(--vscode-errorForeground);
+  padding: 14px;
+  border-radius: 8px;
+}
+
+.mermaid-error-message {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.mermaid-error-source {
+  margin: 10px 0 0;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  white-space: pre-wrap;
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.92em;
+}
+
+body.mermaid-modal-open {
+  overflow: hidden;
+}
+
+.mermaid-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+}
+
+.mermaid-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--vscode-editor-background, #000) 35%, transparent);
+  backdrop-filter: blur(2px);
+}
+
+.mermaid-modal-panel {
+  position: absolute;
+  inset: 24px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.mermaid-modal-toolbar {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--paper-strong) 92%, transparent);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--vscode-widget-shadow, #000) 18%, transparent);
+}
+
+.mermaid-modal-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.mermaid-modal-btn:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--vscode-editor-foreground) 8%, transparent);
+}
+
+.mermaid-modal-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.mermaid-modal-viewport {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px 24px;
+}
+
+.mermaid-modal-content {
+  transform-origin: center center;
+  transition: transform 0.12s ease;
+}
+
+.mermaid-modal-content svg {
+  display: block;
+  max-width: none;
+  height: auto;
+}
+
 .table-wrap {
   overflow: auto;
   margin: 18px 0 24px;

@@ -648,13 +648,16 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     const jsUri = webview
       .asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "reportViewer.js"))
       .with({ query: `v=${cacheKey}` });
+    const mermaidUri = webview
+      .asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "mermaid.min.js"))
+      .with({ query: `v=${cacheKey}` });
     const nonce = cacheKey;
 
     return `<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https: data:; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https: data:; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource} data:; script-src 'nonce-${nonce}';">
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="${cssUri}" />
   <title>Report Markdown Viewer</title>
@@ -706,6 +709,7 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       </section>
     </div>
   </div>
+  <script nonce="${nonce}" src="${mermaidUri}"></script>
   <script nonce="${nonce}" src="${jsUri}"></script>
 </body>
 </html>`;
