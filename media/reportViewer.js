@@ -599,7 +599,7 @@ function renderReport(payload) {
   const tocInner = document.createElement("div");
   tocInner.className = "toc-inner";
 
-  const numberedFiles = payload.files.map((file, index) => withOutlineNumbers(file, index + 1));
+  const numberedFiles = payload.files.map((file) => withOutlineNumbers(file));
   for (const file of numberedFiles) {
     tocInner.appendChild(createFileToc(file));
     reportContent.appendChild(renderFile(file));
@@ -612,24 +612,15 @@ function renderReport(payload) {
 function createFileToc(file) {
   const section = document.createElement("section");
   section.className = "toc-file";
-  const fileAnchor = `file-${slugify(file.name)}`;
   const headingTree = buildHeadingTree(file.numberedHeadings || []);
 
   if (!headingTree.length) {
-    section.appendChild(createTocLink("toc-file-title", fileAnchor, file.outlineNumber, file.label, 0));
     return section;
   }
 
-  section.appendChild(
-    createTocBranch({
-      anchorId: fileAnchor,
-      outlineNumber: file.outlineNumber,
-      text: file.label,
-      className: "toc-file-title",
-      level: 0,
-      children: headingTree
-    })
-  );
+  for (const node of headingTree) {
+    section.appendChild(renderHeadingNode(node));
+  }
   return section;
 }
 
@@ -696,15 +687,12 @@ function renderHeadingNode(node) {
 function renderFile(file) {
   const section = document.createElement("section");
   section.className = "report-file";
-  section.id = `file-${slugify(file.name)}`;
-  const title = document.createElement("h1");
-  setOutlineLabel(title, file.outlineNumber, file.label, "content");
-  section.appendChild(title);
+  section.id = `doc-${slugify(file.name)}`;
   section.appendChild(renderMarkdown(file.content, file));
   return section;
 }
 
-function withOutlineNumbers(file, fileNumber) {
+function withOutlineNumbers(file) {
   const counters = [];
   const numberedHeadings = (file.headings || []).map((heading) => {
     const level = Math.max(1, Math.min(Number(heading.level) || 1, 6));
@@ -713,7 +701,7 @@ function withOutlineNumbers(file, fileNumber) {
     for (let index = 0; index < level - 1; index += 1) {
       if (!counters[index]) counters[index] = 1;
     }
-    const outlineNumber = [fileNumber, ...counters.slice(0, level)].join(".");
+    const outlineNumber = counters.slice(0, level).join(".");
     return {
       ...heading,
       cleanText: stripOutlinePrefix(heading.text),
@@ -722,7 +710,6 @@ function withOutlineNumbers(file, fileNumber) {
   });
   return {
     ...file,
-    outlineNumber: String(fileNumber),
     numberedHeadings
   };
 }
@@ -1225,7 +1212,7 @@ function renderMarkdown(content, file) {
     if (heading) {
       flushParagraph();
       flushTable();
-      const level = Math.min(heading[1].length + 1, 6);
+      const level = Math.min(heading[1].length, 6);
       const h = document.createElement(`h${level}`);
       const numberedHeading = file.numberedHeadings?.[headingIndex];
       const rawText = heading[2].replace(/\s+#*$/, "").trim();
