@@ -28,6 +28,8 @@ let tocScrollSpyTimer = null;
 let tocScrollSpyResumeTimer = null;
 let latestDocumentText = "";
 let editorDirty = false;
+let activeInternalJump = null;
+let internalLinkSerial = 0;
 
 const SETTINGS_KEYS = {
   fontScale: "meowReportMarkdown.fontScale",
@@ -675,16 +677,10 @@ function pauseTocScrollSpy(durationMs = 900) {
 }
 
 function scrollToAnchor(anchorId) {
-  if (!anchorId) {
-    return;
-  }
-
-  const target =
-    document.getElementById(anchorId) ||
-    document.getElementById(decodeURIComponent(anchorId));
+  const target = getAnchorTarget(anchorId);
 
   if (!target) {
-    return;
+    return null;
   }
 
   const link = Array.from(toc?.querySelectorAll("a[data-anchor]") || []).find(
@@ -696,6 +692,47 @@ function scrollToAnchor(anchorId) {
 
   pauseTocScrollSpy();
   scrollElementToViewport(target, { block: "start", behavior: "smooth" });
+  return target;
+}
+
+function getAnchorTarget(anchorId) {
+  if (!anchorId) {
+    return null;
+  }
+  const rawTarget = document.getElementById(anchorId) || document.getElementById(decodeURIComponent(anchorId));
+  return normalizeAnchorTarget(rawTarget);
+}
+
+function normalizeAnchorTarget(target) {
+  if (!target) {
+    return null;
+  }
+  if (isHeadingElement(target)) {
+    return target;
+  }
+
+  const isInlineAnchorMarker =
+    (target.tagName === "SPAN" || target.tagName === "A") && !String(target.textContent || "").trim();
+  if (!isInlineAnchorMarker) {
+    return target;
+  }
+
+  let next = target.nextElementSibling;
+  while (next) {
+    if (isHeadingElement(next)) {
+      return next;
+    }
+    next = next.nextElementSibling;
+  }
+
+  return target;
+}
+
+function isHeadingElement(element) {
+  if (!element?.tagName) {
+    return false;
+  }
+  return /^H[1-6]$/.test(element.tagName);
 }
 
 function createTocLink(className, anchorId, outlineNumber, text, level = 0) {
@@ -716,6 +753,8 @@ function renderReport(payload) {
   reportContent.innerHTML = "";
   activeCitation = null;
   citeRefSerial = 0;
+  internalLinkSerial = 0;
+  clearActiveInternalJump();
 
   if (!payload?.files?.length) {
     renderError("No markdown content found.");
@@ -733,6 +772,81 @@ function renderReport(payload) {
   toc.appendChild(tocInner);
   updateActiveToc();
   void hydrateMermaid(reportContent);
+}
+
+function decorateInternalAnchorLink(link) {
+  if (!link) {
+    return;
+  }
+  link.classList.add("cite-ref");
+  if (!link.id) {
+    link.id = `internal-link-${internalLinkSerial}`;
+    internalLinkSerial += 1;
+  }
+}
+
+function ensureElementId(element, prefix = "internal-link") {
+  if (!element) {
+    return "";
+  }
+  if (element.id) {
+    return element.id;
+  }
+  const unique = `${prefix}-${internalLinkSerial}`;
+  internalLinkSerial += 1;
+  element.id = unique;
+  return unique;
+}
+
+function activateInternalJump(sourceLink, anchorId) {
+  const target = getAnchorTarget(anchorId);
+  if (!target) {
+    return false;
+  }
+
+  clearCitationFlash();
+  clearActiveCitation();
+  clearActiveInternalJump();
+
+  decorateInternalAnchorLink(sourceLink);
+  const sourceId = sourceLink.id;
+  sourceLink.classList.add("cite-active");
+
+  activeInternalJump = {
+    sourceId,
+    targetId: target.id || ensureElementId(target, "jump-target")
+  };
+
+  target.classList.add("jump-target", "source-highlight");
+
+  const tocLink = Array.from(toc?.querySelectorAll("a[data-anchor]") || []).find(
+    (item) => item.dataset.anchor === anchorId
+  );
+  if (tocLink) {
+    setActiveTocLink(tocLink);
+  }
+
+  pauseTocScrollSpy(1200);
+  scrollElementToViewport(target, { block: "center", behavior: "smooth" });
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "source-return";
+  button.textContent = "返回来源";
+  button.title = "返回内链来源并清除高亮";
+  button.dataset.returnTarget = sourceId;
+  target.appendChild(button);
+
+  return true;
+}
+
+function clearActiveInternalJump() {
+  activeInternalJump = null;
+  document.querySelectorAll("a.cite-ref.cite-active").forEach((node) => node.classList.remove("cite-active"));
+  document.querySelectorAll(".jump-target").forEach((node) => {
+    node.classList.remove("jump-target", "source-highlight");
+    node.querySelectorAll(".source-return").forEach((button) => button.remove());
+  });
 }
 
 function createFileToc(file) {
@@ -1046,6 +1160,7 @@ function renderFootnoteRef(id, context) {
   link.href = `#fn-${context.fileKey}-${number}`;
   link.id = `fnref-${context.fileKey}-${number}`;
   link.dataset.anchor = `fn-${context.fileKey}-${number}`;
+  decorateInternalAnchorLink(link);
   link.textContent = String(number);
   sup.appendChild(link);
   return sup;
@@ -1074,6 +1189,7 @@ function renderFootnotesSection(context) {
     back.href = `#fnref-${context.fileKey}-${number}`;
     back.dataset.anchor = `fnref-${context.fileKey}-${number}`;
     back.className = "footnote-backref";
+    decorateInternalAnchorLink(back);
     back.textContent = " ↩";
     item.appendChild(back);
     list.appendChild(item);
@@ -1894,6 +2010,9 @@ function renderInlineMarkdown(text, context = {}) {
       const link = document.createElement("a");
       link.href = href;
       link.title = href;
+      if (href.startsWith("#")) {
+        decorateInternalAnchorLink(link);
+      }
       appendInlineText(link, label || href);
       fragment.appendChild(link);
     } else {
@@ -2032,7 +2151,7 @@ function renderCitationGroup(rawNumbers, context) {
 }
 
 function handleReportClick(evt) {
-  const cite = evt.target.closest(".cite-ref");
+  const cite = evt.target.closest("button.cite-ref");
   if (cite) {
     evt.preventDefault();
     activateCitation(cite);
@@ -2042,9 +2161,12 @@ function handleReportClick(evt) {
   const returnButton = evt.target.closest(".source-return");
   if (returnButton) {
     evt.preventDefault();
-    const citeRef = document.getElementById(returnButton.dataset.returnTarget);
+    const returnTarget = document.getElementById(returnButton.dataset.returnTarget);
     clearActiveCitation();
-    if (citeRef) returnToCitation(citeRef);
+    clearActiveInternalJump();
+    if (returnTarget) {
+      returnToJumpSource(returnTarget);
+    }
     return;
   }
 
@@ -2065,7 +2187,19 @@ function handleReportClick(evt) {
 
   if (anchorId || href.startsWith("#")) {
     evt.preventDefault();
-    scrollToAnchor(anchorId || href.slice(1));
+    const targetAnchor = anchorId || href.slice(1);
+    if (link.closest("#toc")) {
+      scrollToAnchor(targetAnchor);
+      return;
+    }
+    if (link.closest("#reportContent")) {
+      const handled = activateInternalJump(link, targetAnchor);
+      if (!handled) {
+        scrollToAnchor(targetAnchor);
+      }
+      return;
+    }
+    scrollToAnchor(targetAnchor);
     return;
   }
 
@@ -2083,6 +2217,7 @@ function activateCitation(cite) {
   if (!source) return;
   clearCitationFlash();
   clearActiveCitation();
+  clearActiveInternalJump();
 
   activeCitation = {
     citeId: cite.id,
@@ -2109,10 +2244,10 @@ function clearActiveCitation() {
   document.querySelectorAll(".source-return").forEach((node) => node.remove());
 }
 
-function returnToCitation(citeRef) {
+function returnToJumpSource(returnTarget) {
   clearCitationFlash();
   pauseTocScrollSpy(1200);
-  scrollThenFlashCitation(citeRef);
+  scrollThenFlashCitation(returnTarget);
 }
 
 function flashReturnedCitation(citeRef) {
@@ -2190,8 +2325,11 @@ function findMarkdownLinkEnd(value, start) {
 
 function isSafeHref(href) {
   const value = String(href || "").trim();
-  if (!value || value.startsWith("#")) {
+  if (!value) {
     return false;
+  }
+  if (value.startsWith("#")) {
+    return true;
   }
 
   if (/^(https?:|mailto:)/i.test(value)) {
