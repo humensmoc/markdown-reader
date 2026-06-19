@@ -740,6 +740,14 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
           <span class="reader-settings-switch-ui" aria-hidden="true"></span>
         </label>
       </section>
+      <section class="reader-settings-group">
+        <h2 class="reader-settings-label">交互</h2>
+        <label class="reader-settings-switch" for="enableBlockDrag">
+          <span>正文块拖动排序</span>
+          <input id="enableBlockDrag" type="checkbox" />
+          <span class="reader-settings-switch-ui" aria-hidden="true"></span>
+        </label>
+      </section>
     </div>
   </div>
   <script nonce="${nonce}" src="${mermaidUri}"></script>

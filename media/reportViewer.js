@@ -18,6 +18,7 @@ const showTocNumbersInput = document.getElementById("showTocNumbers");
 const showContentNumbersInput = document.getElementById("showContentNumbers");
 const headingFontScaleInput = document.getElementById("headingFontScale");
 const rainbowHeadingColorsInput = document.getElementById("rainbowHeadingColors");
+const enableBlockDragInput = document.getElementById("enableBlockDrag");
 let activeCitation = null;
 let citeRefSerial = 0;
 let citeFlashEndTimer = null;
@@ -30,13 +31,15 @@ let latestDocumentText = "";
 let editorDirty = false;
 let activeInternalJump = null;
 let internalLinkSerial = 0;
+let blockDragState = null;
 
 const SETTINGS_KEYS = {
   fontScale: "meowReportMarkdown.fontScale",
   showTocNumbers: "meowReportMarkdown.showTocNumbers",
   showContentNumbers: "meowReportMarkdown.showContentNumbers",
   headingFontScale: "meowReportMarkdown.headingFontScale",
-  rainbowHeadingColors: "meowReportMarkdown.rainbowHeadingColors"
+  rainbowHeadingColors: "meowReportMarkdown.rainbowHeadingColors",
+  enableBlockDrag: "meowReportMarkdown.enableBlockDrag"
 };
 const LEGACY_SETTINGS_KEYS = {
   contentFontScale: "meowReportMarkdown.contentFontScale",
@@ -53,7 +56,8 @@ const readerSettings = {
   showTocNumbers: true,
   showContentNumbers: true,
   headingFontScale: true,
-  rainbowHeadingColors: false
+  rainbowHeadingColors: false,
+  enableBlockDrag: false
 };
 
 initTocDock();
@@ -62,6 +66,7 @@ initTocScrollSpy();
 initTocWheelIsolation();
 initReaderSettings();
 initEditorMode();
+initBlockDrag();
 
 window.addEventListener("message", (event) => {
   const message = event.data;
@@ -175,6 +180,12 @@ function initReaderSettings() {
     saveReaderSettings();
     applyReaderSettings();
   });
+  enableBlockDragInput?.addEventListener("change", () => {
+    readerSettings.enableBlockDrag = Boolean(enableBlockDragInput.checked);
+    saveReaderSettings();
+    applyReaderSettings();
+    applyBlockDragSetting();
+  });
 }
 
 function isReaderSettingsOpen() {
@@ -246,6 +257,7 @@ function enterEditorMode() {
   editorModeToggle.hidden = true;
   editorSaveBtn.hidden = false;
   editorCancelBtn.hidden = false;
+  applyBlockDragSetting();
   window.requestAnimationFrame(() => reportEditor.focus());
 }
 
@@ -268,6 +280,7 @@ function exitEditorMode({ discardChanges = false, skipConfirm = false } = {}) {
   editorModeToggle.hidden = false;
   editorSaveBtn.hidden = true;
   editorCancelBtn.hidden = true;
+  applyBlockDragSetting();
 }
 
 function loadReaderSettings() {
@@ -286,6 +299,7 @@ function loadReaderSettings() {
   readerSettings.showContentNumbers = readBooleanSetting(SETTINGS_KEYS.showContentNumbers, !legacyHideNumbers);
   readerSettings.headingFontScale = readBooleanSetting(SETTINGS_KEYS.headingFontScale, true);
   readerSettings.rainbowHeadingColors = readBooleanSetting(SETTINGS_KEYS.rainbowHeadingColors, false);
+  readerSettings.enableBlockDrag = readBooleanSetting(SETTINGS_KEYS.enableBlockDrag, false);
 }
 
 function readBooleanSetting(key, defaultValue) {
@@ -302,6 +316,7 @@ function saveReaderSettings() {
   localStorage.setItem(SETTINGS_KEYS.showContentNumbers, readerSettings.showContentNumbers ? "1" : "0");
   localStorage.setItem(SETTINGS_KEYS.headingFontScale, readerSettings.headingFontScale ? "1" : "0");
   localStorage.setItem(SETTINGS_KEYS.rainbowHeadingColors, readerSettings.rainbowHeadingColors ? "1" : "0");
+  localStorage.setItem(SETTINGS_KEYS.enableBlockDrag, readerSettings.enableBlockDrag ? "1" : "0");
 }
 
 function clampFontScale(value) {
@@ -324,6 +339,7 @@ function applyReaderSettings() {
   document.documentElement.classList.toggle("rainbow-headings", readerSettings.rainbowHeadingColors);
   document.documentElement.classList.toggle("show-content-numbers", readerSettings.showContentNumbers);
   document.documentElement.classList.toggle("show-toc-numbers", readerSettings.showTocNumbers);
+  document.documentElement.classList.toggle("block-drag-enabled", readerSettings.enableBlockDrag);
 }
 
 function updateReaderSettingsUi() {
@@ -341,6 +357,9 @@ function updateReaderSettingsUi() {
   }
   if (rainbowHeadingColorsInput) {
     rainbowHeadingColorsInput.checked = readerSettings.rainbowHeadingColors;
+  }
+  if (enableBlockDragInput) {
+    enableBlockDragInput.checked = readerSettings.enableBlockDrag;
   }
   fontDecrease?.toggleAttribute("disabled", readerSettings.fontScale <= FONT_SCALE_MIN);
   fontIncrease?.toggleAttribute("disabled", readerSettings.fontScale >= FONT_SCALE_MAX);
@@ -786,6 +805,307 @@ function wrapContentInSections(container) {
   }
 }
 
+function isBlockDragEnabled() {
+  return Boolean(readerSettings.enableBlockDrag) && !document.body.classList.contains("editor-mode");
+}
+
+function applyBlockDragSetting() {
+  document.documentElement.classList.toggle("block-drag-enabled", Boolean(readerSettings.enableBlockDrag));
+  document.querySelectorAll(".md-drag-handle").forEach((node) => node.remove());
+
+  if (!isBlockDragEnabled()) {
+    document.querySelectorAll(".md-block-draggable").forEach((node) => {
+      node.classList.remove("md-block-draggable", "md-block-dragging");
+    });
+    clearBlockDropIndicators();
+    blockDragState = null;
+    return;
+  }
+
+  for (const root of document.querySelectorAll("#reportContent .markdown-body")) {
+    annotateContentBranches(root);
+    root.querySelectorAll("p.md-block:not(.list-line)").forEach((paragraph) => {
+      paragraph.classList.add("md-block-draggable");
+    });
+    attachBlockDragHandles(root);
+  }
+}
+
+function tagMdBlock(element, startLine, endLine, { draggable = false } = {}) {
+  if (!element || startLine < 0 || endLine < startLine) {
+    return;
+  }
+  element.dataset.mdStart = String(startLine);
+  element.dataset.mdEnd = String(endLine);
+  element.classList.add("md-block");
+  if (draggable && isBlockDragEnabled()) {
+    element.classList.add("md-block-draggable");
+  }
+}
+
+function annotateContentBranch(branch) {
+  const heading = branch.querySelector(":scope > .report-heading");
+  if (!heading?.dataset.mdStart) {
+    return;
+  }
+
+  let start = Number(heading.dataset.mdStart);
+  let end = Number(heading.dataset.mdEnd ?? heading.dataset.mdStart);
+  const body = branch.querySelector(":scope > .content-branch-body");
+
+  if (body) {
+    for (const child of body.children) {
+      if (child.classList.contains("content-branch")) {
+        annotateContentBranch(child);
+        if (child.dataset.mdEnd) {
+          end = Math.max(end, Number(child.dataset.mdEnd));
+        }
+      } else if (child.dataset.mdStart) {
+        end = Math.max(end, Number(child.dataset.mdEnd));
+      }
+    }
+  }
+
+  branch.dataset.mdStart = String(start);
+  branch.dataset.mdEnd = String(end);
+  if (isBlockDragEnabled()) {
+    branch.classList.add("md-block-draggable");
+  }
+}
+
+function annotateContentBranches(root) {
+  const contentRoot = root.querySelector(":scope > .content-root") || root;
+  for (const branch of contentRoot.querySelectorAll(":scope > .content-branch")) {
+    annotateContentBranch(branch);
+  }
+}
+
+function extractMdBlockText(lines, element) {
+  const start = Number(element.dataset.mdStart);
+  const end = Number(element.dataset.mdEnd);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    return "";
+  }
+  return lines.slice(start, end + 1).join("\n");
+}
+
+function serializeMarkdownContainer(container, lines) {
+  const parts = [];
+  for (const child of container.children) {
+    if (child.classList.contains("footnotes")) {
+      continue;
+    }
+    if (child.classList.contains("content-branch")) {
+      parts.push(serializeMarkdownBranch(child, lines));
+    } else if (child.dataset.mdStart) {
+      parts.push(extractMdBlockText(lines, child));
+    }
+  }
+  return parts.filter((part) => part.trim()).join("\n\n");
+}
+
+function serializeMarkdownBranch(branch, lines) {
+  const heading = branch.querySelector(":scope > .report-heading");
+  const body = branch.querySelector(":scope > .content-branch-body");
+  const headingText = heading ? extractMdBlockText(lines, heading) : "";
+  if (!body?.children.length) {
+    return headingText;
+  }
+  const bodyText = serializeMarkdownContainer(body, lines);
+  return bodyText ? `${headingText}\n\n${bodyText}` : headingText;
+}
+
+function extractFootnoteSuffix(content) {
+  const rawLines = String(content || "").split(/\r?\n/);
+  const collected = [];
+  let index = rawLines.length - 1;
+
+  while (index >= 0) {
+    const line = rawLines[index];
+    const trimmed = line.trim();
+    const isDefinition = /^\[\^[^\]]+\]:/.test(trimmed);
+    const isContinuation = collected.length > 0 && /^(\s{4,}|\t)/.test(line);
+    const isBlankGap = collected.length > 0 && !trimmed;
+
+    if (isDefinition || isContinuation || isBlankGap) {
+      collected.unshift(line);
+      index -= 1;
+      continue;
+    }
+    break;
+  }
+
+  while (collected.length && !collected[0].trim()) {
+    collected.shift();
+  }
+  return collected.join("\n");
+}
+
+function serializeDocumentMarkdown() {
+  const lines = preprocessMarkdownContent(latestDocumentText).lines;
+  const chunks = [];
+
+  for (const markdownBody of document.querySelectorAll("#reportContent .markdown-body")) {
+    const contentRoot = markdownBody.querySelector(":scope > .content-root");
+    if (!contentRoot) {
+      continue;
+    }
+    chunks.push(serializeMarkdownContainer(contentRoot, lines));
+  }
+
+  const body = chunks.filter((chunk) => chunk.trim()).join("\n\n");
+  const footnotes = extractFootnoteSuffix(latestDocumentText);
+  if (!footnotes.trim()) {
+    return body;
+  }
+  return body ? `${body}\n\n${footnotes}` : footnotes;
+}
+
+function createMdDragHandle() {
+  const handle = document.createElement("button");
+  handle.type = "button";
+  handle.className = "md-drag-handle";
+  handle.draggable = true;
+  handle.setAttribute("aria-label", "拖动排序");
+  handle.title = "拖动排序";
+  handle.textContent = "⋮⋮";
+  return handle;
+}
+
+function attachBlockDragHandles(root) {
+  if (!root || !isBlockDragEnabled()) {
+    return;
+  }
+
+  for (const branch of root.querySelectorAll(".content-branch.md-block-draggable")) {
+    branch.querySelector(":scope > .report-heading .md-drag-handle")?.remove();
+    if (branch.querySelector(":scope > .md-drag-handle")) {
+      continue;
+    }
+    branch.insertBefore(createMdDragHandle(), branch.firstChild);
+  }
+
+  for (const block of root.querySelectorAll("p.md-block-draggable")) {
+    if (block.querySelector(":scope > .md-drag-handle")) {
+      continue;
+    }
+    block.insertBefore(createMdDragHandle(), block.firstChild);
+  }
+}
+
+function clearBlockDropIndicators() {
+  document.querySelectorAll(".md-drop-indicator").forEach((node) => node.remove());
+}
+
+function getBlockDropTarget(container, clientY, draggingBlock) {
+  const siblings = Array.from(container.children).filter(
+    (child) =>
+      child !== draggingBlock &&
+      (child.classList.contains("md-block-draggable") || child.classList.contains("content-branch"))
+  );
+
+  let closest = null;
+  let closestOffset = Number.NEGATIVE_INFINITY;
+  for (const sibling of siblings) {
+    const rect = sibling.getBoundingClientRect();
+    const offset = clientY - rect.top - rect.height / 2;
+    if (offset < 0 && offset > closestOffset) {
+      closestOffset = offset;
+      closest = sibling;
+    }
+  }
+  return closest;
+}
+
+function showBlockDropIndicator(container, beforeNode) {
+  clearBlockDropIndicators();
+  const indicator = document.createElement("div");
+  indicator.className = "md-drop-indicator";
+  indicator.setAttribute("aria-hidden", "true");
+  if (beforeNode) {
+    container.insertBefore(indicator, beforeNode);
+  } else {
+    container.appendChild(indicator);
+  }
+}
+
+function applyMarkdownReorder() {
+  if (!vscode || !isBlockDragEnabled()) {
+    return;
+  }
+  const nextText = serializeDocumentMarkdown();
+  if (nextText === latestDocumentText) {
+    return;
+  }
+  latestDocumentText = nextText;
+  vscode.postMessage({ type: "saveContent", content: nextText });
+}
+
+function initBlockDrag() {
+  if (!reportContent) {
+    return;
+  }
+
+  reportContent.addEventListener("dragstart", (event) => {
+    if (!isBlockDragEnabled()) {
+      return;
+    }
+    const handle = event.target.closest(".md-drag-handle");
+    if (!handle) {
+      return;
+    }
+    const block = handle.closest(".md-block-draggable");
+    const container = block?.parentElement;
+    if (!block || !container) {
+      return;
+    }
+    blockDragState = { block, container };
+    block.classList.add("md-block-dragging");
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", "md-block");
+  });
+
+  reportContent.addEventListener("dragend", () => {
+    blockDragState?.block?.classList.remove("md-block-dragging");
+    blockDragState = null;
+    clearBlockDropIndicators();
+  });
+
+  reportContent.addEventListener("dragover", (event) => {
+    if (!blockDragState) {
+      return;
+    }
+    if (event.target.closest(".md-drag-handle")) {
+      return;
+    }
+    const container = blockDragState.container;
+    if (!container || !container.contains(event.target)) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    showBlockDropIndicator(container, getBlockDropTarget(container, event.clientY, blockDragState.block));
+  });
+
+  reportContent.addEventListener("drop", (event) => {
+    if (!blockDragState) {
+      return;
+    }
+    event.preventDefault();
+    const { block, container } = blockDragState;
+    const beforeNode = getBlockDropTarget(container, event.clientY, block);
+    if (beforeNode) {
+      container.insertBefore(block, beforeNode);
+    } else {
+      container.appendChild(block);
+    }
+    clearBlockDropIndicators();
+    blockDragState.block?.classList.remove("md-block-dragging");
+    blockDragState = null;
+    applyMarkdownReorder();
+  });
+}
+
 function pauseTocScrollSpy(durationMs = 900) {
   tocScrollSpyPaused = true;
   if (tocScrollSpyResumeTimer) {
@@ -1058,6 +1378,8 @@ function renderFile(file) {
   markdownRoot.className = "markdown-body";
   markdownRoot.appendChild(renderMarkdown(file.content, file));
   wrapContentInSections(markdownRoot);
+  annotateContentBranches(markdownRoot);
+  attachBlockDragHandles(markdownRoot);
   section.appendChild(markdownRoot);
   return section;
 }
@@ -1668,28 +1990,41 @@ function renderMarkdown(content, file) {
     footnoteRefs: []
   };
   let paragraph = [];
+  let paragraphStartLine = -1;
+  let paragraphEndLine = -1;
   let inCode = false;
   let codeLang = "";
   let codeLines = [];
+  let codeStartLine = -1;
   let tableRows = [];
   let headingIndex = 0;
 
   function flushParagraph() {
-    if (!paragraph.length) return;
+    if (!paragraph.length) {
+      return;
+    }
     const p = document.createElement("p");
     appendInlineMarkdown(p, paragraph.join(" "), context);
+    tagMdBlock(p, paragraphStartLine, paragraphEndLine, { draggable: true });
     fragment.appendChild(p);
     paragraph = [];
+    paragraphStartLine = -1;
+    paragraphEndLine = -1;
   }
 
   function flushTable() {
-    if (!tableRows.length) return;
-    fragment.appendChild(renderTable(tableRows, context));
+    if (!tableRows.length) {
+      return;
+    }
+    const table = renderTable(tableRows, context);
+    tagMdBlock(table, tableRows[0].lineIndex, tableRows[tableRows.length - 1].lineIndex);
+    fragment.appendChild(table);
     tableRows = [];
   }
 
-  function flushCode() {
+  function flushCode(endLine) {
     const source = codeLines.join("\n");
+    let blockElement;
     if (codeLang === "mermaid") {
       const block = document.createElement("div");
       block.className = "mermaid-block";
@@ -1709,15 +2044,18 @@ function renderMarkdown(content, file) {
       const content = document.createElement("div");
       content.className = "mermaid-content";
       block.append(toolbar, content);
-      fragment.appendChild(block);
+      blockElement = block;
     } else {
       const pre = document.createElement("pre");
       const code = document.createElement("code");
       code.textContent = source;
       pre.appendChild(code);
-      fragment.appendChild(pre);
+      blockElement = pre;
     }
+    tagMdBlock(blockElement, codeStartLine, endLine);
+    fragment.appendChild(blockElement);
     codeLines = [];
+    codeStartLine = -1;
   }
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
@@ -1726,11 +2064,12 @@ function renderMarkdown(content, file) {
       flushParagraph();
       flushTable();
       if (inCode) {
-        flushCode();
+        flushCode(lineIndex);
         codeLang = "";
       } else {
         const open = /^```([^\s`]*)/.exec(line.trim());
         codeLang = open && open[1] ? open[1].toLowerCase() : "";
+        codeStartLine = lineIndex;
       }
       inCode = !inCode;
       continue;
@@ -1748,7 +2087,9 @@ function renderMarkdown(content, file) {
     if (sourceLine) {
       flushParagraph();
       flushTable();
-      fragment.appendChild(renderSourceLine(sourceLine, context));
+      const item = renderSourceLine(sourceLine, context);
+      tagMdBlock(item, lineIndex, lineIndex);
+      fragment.appendChild(item);
       continue;
     }
     const heading = /^(#{1,6})\s+(.+?)\s*$/.exec(line);
@@ -1771,6 +2112,7 @@ function renderMarkdown(content, file) {
         h.appendChild(textSpan);
       }
       h.id = numberedHeading?.anchor || makeFallbackAnchor(file.name, headingIndex, cleanText);
+      tagMdBlock(h, lineIndex, lineIndex);
       headingIndex += 1;
       fragment.appendChild(h);
       continue;
@@ -1784,23 +2126,31 @@ function renderMarkdown(content, file) {
       flushParagraph();
       flushTable();
       const blockquote = parseBlockquote(lines, lineIndex);
-      fragment.appendChild(renderBlockquote(blockquote.parts, context));
+      const quote = renderBlockquote(blockquote.parts, context);
+      tagMdBlock(quote, lineIndex, blockquote.nextIndex - 1);
+      fragment.appendChild(quote);
       lineIndex = blockquote.nextIndex - 1;
       continue;
     }
     if (isHtmlBlockLine(line)) {
       flushParagraph();
       flushTable();
-      appendSafeHtmlBlock(fragment, line.trim());
+      const htmlBlock = document.createElement("div");
+      htmlBlock.className = "md-html-block";
+      appendSafeHtmlBlock(htmlBlock, line.trim());
+      tagMdBlock(htmlBlock, lineIndex, lineIndex);
+      fragment.appendChild(htmlBlock);
       continue;
     }
     if (lineIndex + 1 < lines.length && /^\s*:\s+/.test(lines[lineIndex + 1])) {
-      const definitionList = parseDefinitionList(lines, lineIndex);
-      if (definitionList?.items?.length) {
+      const definitionListResult = parseDefinitionList(lines, lineIndex);
+      if (definitionListResult?.items?.length) {
         flushParagraph();
         flushTable();
-        fragment.appendChild(renderDefinitionList(definitionList.items, context));
-        lineIndex = definitionList.nextIndex - 1;
+        const definitionListNode = renderDefinitionList(definitionListResult.items, context);
+        tagMdBlock(definitionListNode, lineIndex, definitionListResult.nextIndex - 1);
+        fragment.appendChild(definitionListNode);
+        lineIndex = definitionListResult.nextIndex - 1;
         continue;
       }
     }
@@ -1808,9 +2158,9 @@ function renderMarkdown(content, file) {
     if (task) {
       flushParagraph();
       flushTable();
-      fragment.appendChild(
-        renderTaskListItem(task[1].toLowerCase() === "x", task[2].trim(), context, lineIndex)
-      );
+      const taskItem = renderTaskListItem(task[1].toLowerCase() === "x", task[2].trim(), context, lineIndex);
+      tagMdBlock(taskItem, lineIndex, lineIndex);
+      fragment.appendChild(taskItem);
       continue;
     }
     const unordered = /^\s*[-*+]\s+(.+)$/.exec(line);
@@ -1827,15 +2177,22 @@ function renderMarkdown(content, file) {
       body.className = "list-body";
       appendInlineMarkdown(body, ordered ? ordered[2].trim() : unordered[1].trim(), context);
       item.append(marker, body);
+      tagMdBlock(item, lineIndex, lineIndex);
       fragment.appendChild(item);
       continue;
     }
     flushTable();
+    if (!paragraph.length) {
+      paragraphStartLine = lineIndex;
+    }
+    paragraphEndLine = lineIndex;
     paragraph.push(line.trim());
   }
   flushParagraph();
   flushTable();
-  if (inCode) flushCode();
+  if (inCode) {
+    flushCode(lines.length - 1);
+  }
 
   const footnotesSection = renderFootnotesSection(context);
   if (footnotesSection) fragment.appendChild(footnotesSection);
@@ -2488,6 +2845,10 @@ function handleReportClick(evt) {
   if (contentFoldButton) {
     evt.preventDefault();
     toggleContentBranch(contentFoldButton.closest(".content-branch"));
+    return;
+  }
+
+  if (evt.target.closest(".md-drag-handle")) {
     return;
   }
 

@@ -107,9 +107,14 @@ body {
   width: 100%;
   max-width: none;
   margin: 0;
+  --md-drag-gutter: 28px;
   padding: 28px 40px max(88px, 55vh);
   min-height: calc(100vh - var(--topbar-height));
   font-size: calc(var(--vscode-font-size) * var(--font-scale));
+}
+
+html.block-drag-enabled .report-content {
+  padding-left: calc(40px + var(--md-drag-gutter));
 }
 
 .report-editor {
@@ -143,6 +148,10 @@ body.editor-mode .reader-settings-root {
 
 .layout-toc-collapsed .report-content {
   padding-left: 56px;
+}
+
+html.block-drag-enabled .layout-toc-collapsed .report-content {
+  padding-left: calc(56px + var(--md-drag-gutter));
 }
 
 .toc-dock {
@@ -442,6 +451,64 @@ html.rainbow-headings:not(.show-toc-numbers) .toc-file-title .outline-text {
 
 .content-branch[data-collapsed="1"] > .content-branch-body {
   display: none;
+}
+
+.report-file .markdown-body {
+  position: relative;
+}
+
+.md-block-draggable {
+  position: relative;
+}
+
+.md-drag-handle {
+  position: absolute;
+  left: calc(-1 * var(--md-drag-gutter) + 4px);
+  top: 0.12em;
+  z-index: 2;
+  width: 18px;
+  height: 1.35em;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.35em;
+  letter-spacing: -0.08em;
+  text-align: center;
+  opacity: 0;
+  cursor: grab;
+  transition: opacity 0.14s ease, background 0.14s ease, color 0.14s ease;
+}
+
+.content-branch.md-block-draggable:hover > .md-drag-handle,
+p.md-block-draggable:hover > .md-drag-handle,
+.md-drag-handle:hover,
+.md-drag-handle:focus-visible {
+  opacity: 1;
+}
+
+.md-drag-handle:hover {
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
+.md-drag-handle:active {
+  cursor: grabbing;
+}
+
+.md-block-dragging {
+  opacity: 0.55;
+}
+
+.md-drop-indicator {
+  height: 2px;
+  margin: 4px 0;
+  border-radius: 999px;
+  background: var(--blue);
 }
 
 html.heading-font-scale .report-file .report-heading.level-2 {
@@ -1352,8 +1419,16 @@ body.mermaid-modal-open {
     padding: 20px 18px max(72px, 55vh);
   }
 
+  html.block-drag-enabled .report-content {
+    padding-left: calc(18px + var(--md-drag-gutter));
+  }
+
   .layout-toc-collapsed .report-content {
     padding-left: 48px;
+  }
+
+  html.block-drag-enabled .layout-toc-collapsed .report-content {
+    padding-left: calc(48px + var(--md-drag-gutter));
   }
 
   .toc-dock.collapsed {
