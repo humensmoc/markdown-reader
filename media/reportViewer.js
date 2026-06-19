@@ -51,6 +51,7 @@ const readerSettings = {
 initTocDock();
 initTocResize();
 initTocScrollSpy();
+initTocWheelIsolation();
 initReaderSettings();
 
 window.addEventListener("message", (event) => {
@@ -318,6 +319,45 @@ function initTocScrollSpy() {
       }, 50);
     },
     { passive: true }
+  );
+}
+
+function initTocWheelIsolation() {
+  if (!toc) {
+    return;
+  }
+
+  toc.addEventListener(
+    "wheel",
+    (event) => {
+      if (!toc || tocDock?.classList.contains("collapsed")) {
+        return;
+      }
+
+      // Ignore mostly-horizontal trackpad gestures.
+      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) {
+        return;
+      }
+
+      const maxScrollTop = toc.scrollHeight - toc.clientHeight;
+      const canScroll = maxScrollTop > 0;
+      if (!canScroll) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
+      const atTop = toc.scrollTop <= 0;
+      const atBottom = toc.scrollTop >= maxScrollTop - 1;
+      const scrollingUp = event.deltaY < 0;
+      const scrollingDown = event.deltaY > 0;
+
+      if ((scrollingUp && atTop) || (scrollingDown && atBottom)) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    },
+    { passive: false }
   );
 }
 

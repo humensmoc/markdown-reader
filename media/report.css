@@ -184,6 +184,7 @@ body {
 .toc {
   flex: 1 1 auto;
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 10px 8px 14px 4px;
   font-size: calc(12px * var(--font-scale));
   scrollbar-width: none;
