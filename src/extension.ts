@@ -5,7 +5,8 @@ import { buildReportPayload } from "./reportData";
 type ViewerMessage =
   | { type: "ready" }
   | { type: "openExternal"; href?: string }
-  | { type: "openFile"; href?: string };
+  | { type: "openFile"; href?: string }
+  | { type: "saveContent"; content?: string };
 
 const READER_VIEW_TYPE = "meowReportMarkdown.viewer";
 const textModeUris = new Set<string>();
@@ -552,6 +553,11 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 
       if (message.type === "openFile" && message.href) {
         await this.openFileFromHref(document.uri, message.href);
+        return;
+      }
+
+      if (message.type === "saveContent" && typeof message.content === "string") {
+        await this.saveDocumentContent(document, message.content);
       }
     });
 
@@ -591,6 +597,21 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     } catch {
       // Ignore invalid external URL.
     }
+  }
+
+  private async saveDocumentContent(document: vscode.TextDocument, nextContent: string): Promise<void> {
+    const fullRange = new vscode.Range(
+      document.positionAt(0),
+      document.positionAt(document.getText().length)
+    );
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(document.uri, fullRange, nextContent);
+    const applied = await vscode.workspace.applyEdit(edit);
+    if (!applied) {
+      vscode.window.showErrorMessage("保存失败：无法写入文档变更。");
+      return;
+    }
+    await document.save();
   }
 
   private async openFileFromHref(baseDocumentUri: vscode.Uri, href: string): Promise<void> {
@@ -670,7 +691,19 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       <div id="tocResizeHandle" class="toc-resize-handle" role="separator" aria-orientation="vertical" aria-label="调整目录宽度"></div>
     </aside>
     <article id="reportContent" class="report-content"></article>
+    <textarea
+      id="reportEditor"
+      class="report-editor"
+      hidden
+      spellcheck="false"
+      aria-label="Markdown 编辑器"
+    ></textarea>
   </main>
+  <div class="editor-mode-root">
+    <button id="editorModeToggle" type="button" class="editor-mode-btn" aria-pressed="false">编辑</button>
+    <button id="editorSaveBtn" type="button" class="editor-mode-btn primary" hidden>保存并预览</button>
+    <button id="editorCancelBtn" type="button" class="editor-mode-btn" hidden>取消</button>
+  </div>
   <div class="reader-settings-root">
     <button id="readerSettingsToggle" type="button" class="reader-settings-toggle" aria-expanded="false" aria-controls="readerSettingsPanel" title="阅读设置">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm8.94 4.88a8.96 8.96 0 0 0 .06-1.76l2.03-1.58a.75.75 0 0 0 .18-.96l-1.92-3.32a.75.75 0 0 0-.9-.33l-2.39.96a9.06 9.06 0 0 0-1.52-.88l-.36-2.54A.75.75 0 0 0 14.9 2h-3.8a.75.75 0 0 0-.74.65l-.36 2.54c-.54.22-1.05.5-1.52.88l-2.39-.96a.75.75 0 0 0-.9.33L2.27 8.96a.75.75 0 0 0 .18.96l2.03 1.58c-.04.29-.06.58-.06.88s.02.59.06.88L2.45 14.9a.75.75 0 0 0-.18.96l1.92 3.32c.18.31.57.45.9.33l2.39-.96c.47.38.98.66 1.52.88l.36 2.54c.08.57.62 1 1.19 1h3.8c.57 0 1.11-.43 1.19-1l.36-2.54c.54-.22 1.05-.5 1.52-.88l2.39.96c.33.12.72-.02.9-.33l1.92-3.32a.75.75 0 0 0-.18-.96l-2.03-1.58Z"/></svg>

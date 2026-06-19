@@ -4,7 +4,7 @@
 
 ---
 
-## 1. 一句话概括
+## 1. 一句话概括123
 
 这是一个 **VS Code / Cursor 扩展**：用 `CustomTextEditorProvider` 把 `.md` 文件在编辑器中间区域以 **Webview 阅读视图** 打开；扩展主进程负责读文件、抽标题、推数据，Webview 负责渲染目录、正文、引用跳转和 Mermaid 图表。
 
@@ -42,14 +42,18 @@ graph TB
   BROWSER -.->|"逻辑迁移来源"| JS
 ```
 
-| 模块 | 路径 | 职责 |
-|------|------|------|
-| 扩展入口 | `src/extension.ts` | 注册 Custom Editor、自动打开逻辑、Git/Diff 抑制、Webview HTML、双向消息 |
-| 数据层 | `src/reportData.ts` | 把当前 `TextDocument` 转成 `ReportPayload`（单文件模式） |
-| 标题解析 | `src/markdownHeadings.ts` | 正则提取 `#`～`######` 标题，生成 `anchor` |
-| 渲染引擎 | `media/reportViewer.js` | 行级 Markdown 解析、TOC 构建、cite 跳转、Mermaid、阅读设置 |
-| 样式 | `media/report.css` | 双栏布局、目录、引用高亮、Mermaid 弹层 |
-| 扩展清单 | `package.json` | `customEditors`、`commands`、`configuration` |
+
+
+
+| 模块   | 路径                        | 职责                                                    |
+| ---- | ------------------------- | ----------------------------------------------------- |
+| 扩展入口 | `src/extension.ts`        | 注册 Custom Editor、自动打开逻辑、Git/Diff 抑制、Webview HTML、双向消息 |
+| 数据层  | `src/reportData.ts`       | 把当前 `TextDocument` 转成 `ReportPayload`（单文件模式）          |
+| 标题解析 | `src/markdownHeadings.ts` | 正则提取 `#`～`######` 标题，生成 `anchor`                      |
+| 渲染引擎 | `media/reportViewer.js`   | 行级 Markdown 解析、TOC 构建、cite 跳转、Mermaid、阅读设置            |
+| 样式   | `media/report.css`        | 双栏布局、目录、引用高亮、Mermaid 弹层                               |
+| 扩展清单 | `package.json`            | `customEditors`、`commands`、`configuration`            |
+
 
 ---
 
@@ -66,6 +70,8 @@ flowchart LR
   D --> F["注册 openPreview 命令"]
   D --> G["setupAutoOpenReaderMode()"]
 ```
+
+
 
 ### 3.2 打开一个 `.md` 文件的完整链路
 
@@ -103,6 +109,8 @@ sequenceDiagram
   RV->>RV: renderReport(payload)
 ```
 
+
+
 **关键设计点：**
 
 - `ready` 消息必须在 HTML 加载**之前**注册监听器，否则首轮渲染会丢（`extension.ts` 注释已写明）。
@@ -126,6 +134,8 @@ flowchart TD
   SINGLE --> PAYLOAD["ReportPayload"]
   PAYLOAD --> MSG["postMessage render"]
 ```
+
+
 
 `ReportPayload` 结构：
 
@@ -172,20 +182,24 @@ flowchart TD
   HYDRATE --> DONE["updateActiveToc() 同步目录高亮"]
 ```
 
+
+
 ### 4.3 `renderMarkdown` 行扫描器在干什么
 
 可以理解为一只勤劳的喵在逐行读稿：
 
-| 遇到的内容 | 输出 DOM |
-|------------|----------|
-| `#`～`######` 标题 | `<h1>`～`<h6>`，带 `id={anchor}` 和可选编号 |
-| 普通文本行 | 累积进段落，空行时 `flushParagraph` |
-| `\| ... \|` 表格行 | `renderTable` |
-| ` ```lang ` | 进入代码块模式；`lang=mermaid` 时生成 `.mermaid-block` |
-| `[cite source] n.` | `.source-line`，带 `id` 供引用跳转 |
-| `>` 引用块 / 定义列表 / 任务列表 | 对应块级渲染器 |
-| 行内 `[cite: 1,2]` | `.cite-ref` 蓝色数字按钮 |
-| 行内链接 | `<a href="...">` |
+
+| 遇到的内容                 | 输出 DOM                                      |
+| --------------------- | ------------------------------------------- |
+| `#`～`######` 标题       | `<h1>`～`<h6>`，带 `id={anchor}` 和可选编号         |
+| 普通文本行                 | 累积进段落，空行时 `flushParagraph`                  |
+| `| ... |` 表格行         | `renderTable`                               |
+| ````lang`             | 进入代码块模式；`lang=mermaid` 时生成 `.mermaid-block` |
+| `[cite source] n.`    | `.source-line`，带 `id` 供引用跳转                 |
+| `>` 引用块 / 定义列表 / 任务列表 | 对应块级渲染器                                     |
+| 行内 `[cite: 1,2]`      | `.cite-ref` 蓝色数字按钮                          |
+| 行内链接                  | `<a href="...">`                            |
+
 
 Mermaid 分两阶段：
 
@@ -213,6 +227,8 @@ sequenceDiagram
   WV->>EXT: { type: "openFile", href }
   Note over EXT: 相对 .md 路径 → 解析后 vscode.open<br/>限制在 workspace 内
 ```
+
+
 
 ---
 
@@ -251,24 +267,28 @@ flowchart TB
   SCROLL --> A11["updateActiveToc<br/>目录跟随高亮当前标题"]
 ```
 
+
+
 ### 6.2 操作明细表
 
-| 用户操作 | 触发元素 / 事件 | 处理函数 | 结果 |
-|----------|-----------------|----------|------|
-| 点击引用 `[cite: n]` | `.cite-ref` | `activateCitation` | 清除旧高亮 → 来源行 `.source-highlight` → 正文 cite `.cite-active` → 平滑滚到来源 → 插入「返回原文」按钮 |
-| 点击「返回原文」 | `.source-return` | `returnToCitation` | 滚回引用按钮 → `.cite-return-highlight` 闪烁约 1.2s |
-| 点击目录项 | `a[data-anchor]` | `scrollToAnchor` | 暂停目录 scroll-spy 约 900ms → 展开祖先节点 → 正文滚到对应 `id` |
-| 点击目录 ▸/▾ | `.toc-fold` | `toggleTocBranch` | 切换 `data-collapsed`，子目录显示/隐藏 |
-| 点击 `#anchor` 链接 | 正文 `<a href="#...">` | `scrollToAnchor` | 页内跳转，不刷新 |
-| 点击外部链接 | `https://` / `mailto:` | `handleReportClick` → `openExternal` | 扩展调用 `vscode.env.openExternal` |
-| 点击相对 `.md` 链接 | `other.md` / `./x.md` | `handleReportClick` → `openFile` | 扩展解析相对路径，`vscode.open` 打开（限 workspace 内） |
-| 点击 Mermaid 全屏 | `.mermaid-expand-btn` | `openMermaidModal` | 弹层显示 SVG；支持滚轮缩放、左键拖动、Esc 关闭 |
-| 滚动正文 | `window scroll` | `updateActiveToc` | 50ms 节流；根据视口参考线高亮最近经过的标题 |
-| 在目录区滚轮 | `toc wheel` | `initTocWheelIsolation` | 目录滚到顶/底时 `preventDefault`，不带动正文 |
-| 拖动目录宽度 | `#tocResizeHandle` | `initTocResize` | 更新 CSS 变量 `--toc-width`，存入 `localStorage` |
-| 收起/展开目录 | `#tocToggle` | `setTocCollapsed` | 切换 `layout-toc-open/collapsed`，状态持久化 |
-| 改字号 / 编号开关 | 阅读设置面板 | `applyReaderSettings` | 改 `documentElement` 上的 CSS 变量与 class |
-| 编辑并保存 `.md` | VS Code 文本变更 | `scheduleUpdate`（150ms） | 重新 `buildReportPayload` → 整页重渲染 |
+
+| 用户操作             | 触发元素 / 事件              | 处理函数                                 | 结果                                                                             |
+| ---------------- | ---------------------- | ------------------------------------ | ------------------------------------------------------------------------------ |
+| 点击引用 `[cite: n]` | `.cite-ref`            | `activateCitation`                   | 清除旧高亮 → 来源行 `.source-highlight` → 正文 cite `.cite-active` → 平滑滚到来源 → 插入「返回原文」按钮 |
+| 点击「返回原文」         | `.source-return`       | `returnToCitation`                   | 滚回引用按钮 → `.cite-return-highlight` 闪烁约 1.2s                                     |
+| 点击目录项            | `a[data-anchor]`       | `scrollToAnchor`                     | 暂停目录 scroll-spy 约 900ms → 展开祖先节点 → 正文滚到对应 `id`                                 |
+| 点击目录 ▸/▾         | `.toc-fold`            | `toggleTocBranch`                    | 切换 `data-collapsed`，子目录显示/隐藏                                                   |
+| 点击 `#anchor` 链接  | 正文 `<a href="#...">`   | `scrollToAnchor`                     | 页内跳转，不刷新                                                                       |
+| 点击外部链接           | `https://` / `mailto:` | `handleReportClick` → `openExternal` | 扩展调用 `vscode.env.openExternal`                                                 |
+| 点击相对 `.md` 链接    | `other.md` / `./x.md`  | `handleReportClick` → `openFile`     | 扩展解析相对路径，`vscode.open` 打开（限 workspace 内）                                       |
+| 点击 Mermaid 全屏    | `.mermaid-expand-btn`  | `openMermaidModal`                   | 弹层显示 SVG；支持滚轮缩放、左键拖动、Esc 关闭                                                    |
+| 滚动正文             | `window scroll`        | `updateActiveToc`                    | 50ms 节流；根据视口参考线高亮最近经过的标题                                                       |
+| 在目录区滚轮           | `toc wheel`            | `initTocWheelIsolation`              | 目录滚到顶/底时 `preventDefault`，不带动正文                                                |
+| 拖动目录宽度           | `#tocResizeHandle`     | `initTocResize`                      | 更新 CSS 变量 `--toc-width`，存入 `localStorage`                                      |
+| 收起/展开目录          | `#tocToggle`           | `setTocCollapsed`                    | 切换 `layout-toc-open/collapsed`，状态持久化                                           |
+| 改字号 / 编号开关       | 阅读设置面板                 | `applyReaderSettings`                | 改 `documentElement` 上的 CSS 变量与 class                                           |
+| 编辑并保存 `.md`      | VS Code 文本变更           | `scheduleUpdate`（150ms）              | 重新 `buildReportPayload` → 整页重渲染                                                |
+
 
 ### 6.3 引用（cite）跳转小剧场
 
@@ -291,6 +311,8 @@ sequenceDiagram
   Src->>RV: returnToCitation(citeRef)
   RV->>Body: scroll + cite-return-highlight 闪烁
 ```
+
+
 
 来源行在 Markdown 里长这样（见 `docs/markdown_format_spec.md`）：
 
@@ -319,6 +341,8 @@ flowchart TD
   CHECK --> T4["标签标题像 Working Tree / Index"]
 ```
 
+
+
 用户从阅读视图切回文本编辑器时，`textModeUris` 会记下该 URI，之后同一文件不再自动抢回阅读模式。
 
 ---
@@ -327,15 +351,17 @@ flowchart TD
 
 阅读偏好和布局存在 Webview 的 `localStorage`，不经过扩展主进程：
 
-| Key | 含义 |
-|-----|------|
-| `meowReportMarkdown.tocCollapsed` | 目录是否收起 |
-| `meowReportMarkdown.tocWidth` | 目录栏宽度 |
-| `meowReportMarkdown.fontScale` | 正文字号比例 |
-| `meowReportMarkdown.showTocNumbers` | 目录是否显示编号 |
-| `meowReportMarkdown.showContentNumbers` | 正文标题是否显示编号 |
-| `meowReportMarkdown.headingFontScale` | 标题是否逐级缩小 |
-| `meowReportMarkdown.rainbowHeadingColors` | 彩虹标题色 |
+
+| Key                                       | 含义         |
+| ----------------------------------------- | ---------- |
+| `meowReportMarkdown.tocCollapsed`         | 目录是否收起     |
+| `meowReportMarkdown.tocWidth`             | 目录栏宽度      |
+| `meowReportMarkdown.fontScale`            | 正文字号比例     |
+| `meowReportMarkdown.showTocNumbers`       | 目录是否显示编号   |
+| `meowReportMarkdown.showContentNumbers`   | 正文标题是否显示编号 |
+| `meowReportMarkdown.headingFontScale`     | 标题是否逐级缩小   |
+| `meowReportMarkdown.rainbowHeadingColors` | 彩虹标题色      |
+
 
 ---
 
@@ -347,6 +373,8 @@ graph LR
   OLD -->|"样式迁移"| CSS["media/report.css"]
   SERVER["HTTP server 拉报告"] -.->|"插件不再需要"| EXT["extension.ts 直接读 TextDocument"]
 ```
+
+
 
 浏览器版通过 `server.js` 聚合多文件报告；**当前插件版已简化为单文件**，但 DOM 结构、cite 协议、TOC 交互仍与浏览器版一脉相承。调试 UI 时也可对照 `docs/report-index-browser/`。
 
@@ -363,18 +391,22 @@ flowchart LR
   MEDIA --> WV["Webview 引用"]
 ```
 
+
+
 本地开发：`npm install` → `npm run compile` → F5 **Run Extension** → 在新窗口打开 `docs/fixtures/cite-demo.md` 验收。
 
 ---
 
 ## 11. 相关文档
 
-| 文档 | 内容 |
-|------|------|
-| [markdown_reader_plan.md](../markdown_reader_plan.md) | 更完整的设计方案与历史决策 |
-| [p0-feature-development-plan.md](./p0-feature-development-plan.md) | P0 功能拆分与验收标准 |
-| [markdown_format_spec.md](../markdown_format_spec.md) | cite 与扩展 Markdown 语法 |
-| [how-to-release&update-local&extension-market.md](../how-to-release&update-local&extension-market.md) | F5 调试、打包、发版 |
+
+| 文档                                                                                                    | 内容                   |
+| ----------------------------------------------------------------------------------------------------- | -------------------- |
+| [markdown_reader_plan.md](../markdown_reader_plan.md)                                                 | 更完整的设计方案与历史决策        |
+| [p0-feature-development-plan.md](./p0-feature-development-plan.md)                                    | P0 功能拆分与验收标准         |
+| [markdown_format_spec.md](../markdown_format_spec.md)                                                 | cite 与扩展 Markdown 语法 |
+| [how-to-release&update-local&extension-market.md](../how-to-release&update-local&extension-market.md) | F5 调试、打包、发版          |
+
 
 ---
 

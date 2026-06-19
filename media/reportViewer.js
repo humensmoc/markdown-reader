@@ -5,6 +5,10 @@ const tocDock = document.getElementById("tocDock");
 const tocToggle = document.getElementById("tocToggle");
 const toc = document.getElementById("toc");
 const reportContent = document.getElementById("reportContent");
+const reportEditor = document.getElementById("reportEditor");
+const editorModeToggle = document.getElementById("editorModeToggle");
+const editorSaveBtn = document.getElementById("editorSaveBtn");
+const editorCancelBtn = document.getElementById("editorCancelBtn");
 const readerSettingsToggle = document.getElementById("readerSettingsToggle");
 const readerSettingsPanel = document.getElementById("readerSettingsPanel");
 const fontDecrease = document.getElementById("fontDecrease");
@@ -22,6 +26,8 @@ let activeTocLink = null;
 let tocScrollSpyPaused = false;
 let tocScrollSpyTimer = null;
 let tocScrollSpyResumeTimer = null;
+let latestDocumentText = "";
+let editorDirty = false;
 
 const SETTINGS_KEYS = {
   fontScale: "meowReportMarkdown.fontScale",
@@ -53,10 +59,15 @@ initTocResize();
 initTocScrollSpy();
 initTocWheelIsolation();
 initReaderSettings();
+initEditorMode();
 
 window.addEventListener("message", (event) => {
   const message = event.data;
   if (message?.type === "render") {
+    latestDocumentText = message?.payload?.files?.[0]?.content || "";
+    if (document.body.classList.contains("editor-mode") && reportEditor && !editorDirty) {
+      reportEditor.value = latestDocumentText;
+    }
     renderReport(message.payload);
   }
 });
@@ -184,6 +195,77 @@ function handleReaderSettingsOutsideClick(event) {
     return;
   }
   setReaderSettingsOpen(false);
+}
+
+function initEditorMode() {
+  if (!reportEditor || !editorModeToggle || !editorSaveBtn || !editorCancelBtn) {
+    return;
+  }
+
+  editorModeToggle.addEventListener("click", () => {
+    if (document.body.classList.contains("editor-mode")) {
+      exitEditorMode({ discardChanges: false });
+      return;
+    }
+    enterEditorMode();
+  });
+
+  editorSaveBtn.addEventListener("click", () => {
+    if (!reportEditor || !vscode) {
+      return;
+    }
+    const nextText = reportEditor.value;
+    latestDocumentText = nextText;
+    editorDirty = false;
+    vscode.postMessage({ type: "saveContent", content: nextText });
+    exitEditorMode({ discardChanges: false, skipConfirm: true });
+  });
+
+  editorCancelBtn.addEventListener("click", () => {
+    exitEditorMode({ discardChanges: true });
+  });
+
+  reportEditor.addEventListener("input", () => {
+    editorDirty = reportEditor.value !== latestDocumentText;
+  });
+}
+
+function enterEditorMode() {
+  if (!reportEditor || !editorModeToggle || !editorSaveBtn || !editorCancelBtn) {
+    return;
+  }
+  if (isReaderSettingsOpen()) {
+    setReaderSettingsOpen(false);
+  }
+  reportEditor.hidden = false;
+  reportEditor.value = latestDocumentText;
+  editorDirty = false;
+  document.body.classList.add("editor-mode");
+  editorModeToggle.hidden = true;
+  editorSaveBtn.hidden = false;
+  editorCancelBtn.hidden = false;
+  window.requestAnimationFrame(() => reportEditor.focus());
+}
+
+function exitEditorMode({ discardChanges = false, skipConfirm = false } = {}) {
+  if (!reportEditor || !editorModeToggle || !editorSaveBtn || !editorCancelBtn) {
+    return;
+  }
+  if (document.body.classList.contains("editor-mode") && editorDirty && !discardChanges && !skipConfirm) {
+    const confirmed = window.confirm("当前有未保存内容，确定退出编辑模式吗？");
+    if (!confirmed) {
+      return;
+    }
+  }
+  if (discardChanges) {
+    reportEditor.value = latestDocumentText;
+  }
+  editorDirty = false;
+  reportEditor.hidden = true;
+  document.body.classList.remove("editor-mode");
+  editorModeToggle.hidden = false;
+  editorSaveBtn.hidden = true;
+  editorCancelBtn.hidden = true;
 }
 
 function loadReaderSettings() {

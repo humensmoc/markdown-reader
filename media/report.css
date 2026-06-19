@@ -112,6 +112,35 @@ body {
   font-size: calc(var(--vscode-font-size) * var(--font-scale));
 }
 
+.report-editor {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  min-height: calc(100vh - var(--topbar-height));
+  margin: 0;
+  padding: 20px 24px 72px;
+  border: 0;
+  outline: 0;
+  resize: none;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+  line-height: 1.6;
+}
+
+body.editor-mode .report-content {
+  display: none;
+}
+
+body.editor-mode .report-editor {
+  display: block;
+}
+
+body.editor-mode .reader-settings-root {
+  display: none;
+}
+
 .layout-toc-collapsed .report-content {
   padding-left: 56px;
 }
@@ -1016,6 +1045,42 @@ body.mermaid-modal-open {
   right: 18px;
   bottom: 18px;
   z-index: 30;
+}
+
+.editor-mode-root {
+  position: fixed;
+  right: 18px;
+  bottom: 68px;
+  z-index: 30;
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.editor-mode-btn {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--paper) 92%, transparent);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
+}
+
+.editor-mode-btn:hover {
+  background: var(--blue-soft);
+  color: var(--blue);
+  border-color: color-mix(in srgb, var(--blue) 35%, var(--line-strong));
+}
+
+.editor-mode-btn.primary {
+  background: color-mix(in srgb, var(--blue) 18%, var(--paper));
+  color: var(--blue);
 }
 
 .reader-settings-toggle {
