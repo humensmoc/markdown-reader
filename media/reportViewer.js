@@ -746,6 +746,7 @@ function createTocLink(className, anchorId, outlineNumber, text, level = 0) {
 }
 
 function renderReport(payload) {
+  const previousScrollTop = getScrollTop();
   document.title = payload?.title || "Report Markdown Viewer";
 
   closeMermaidModal();
@@ -772,6 +773,9 @@ function renderReport(payload) {
   toc.appendChild(tocInner);
   updateActiveToc();
   void hydrateMermaid(reportContent);
+  window.requestAnimationFrame(() => {
+    setScrollTop(previousScrollTop, "auto");
+  });
 }
 
 function decorateInternalAnchorLink(link) {
@@ -987,9 +991,9 @@ function parseBlockquote(lines, startIndex) {
     const match = /^\s*>\s?(.*)$/.exec(lines[index]);
     if (!match) break;
     if (!match[1].trim() && parts.length) {
-      parts.push("");
+      parts.push({ text: "", lineIndex: -1 });
     } else if (match[1].trim()) {
-      parts.push(match[1].trim());
+      parts.push({ text: match[1].trim(), lineIndex: index });
     }
     index += 1;
   }
@@ -1059,7 +1063,7 @@ function renderBlockquote(parts, context) {
   let current = [];
 
   for (const part of parts) {
-    if (!part) {
+    if (!part.text) {
       if (current.length) {
         chunks.push(current);
         current = [];
@@ -1071,14 +1075,16 @@ function renderBlockquote(parts, context) {
   if (current.length) chunks.push(current);
 
   for (const group of chunks) {
-    for (const line of group) {
-      const task = /^\s*[-*+]\s+\[([ xX])\]\s+(.+)$/.exec(line);
+    for (const part of group) {
+      const task = /^\s*[-*+]\s+\[([ xX])\]\s+(.+)$/.exec(part.text);
       if (task) {
-        blockquote.appendChild(renderTaskListItem(task[1].toLowerCase() === "x", task[2].trim(), context));
+        blockquote.appendChild(
+          renderTaskListItem(task[1].toLowerCase() === "x", task[2].trim(), context, part.lineIndex)
+        );
         continue;
       }
 
-      const unordered = /^\s*[-*+]\s+(.+)$/.exec(line);
+      const unordered = /^\s*[-*+]\s+(.+)$/.exec(part.text);
       if (unordered) {
         const item = document.createElement("p");
         item.className = "list-line unordered-line";
@@ -1094,7 +1100,7 @@ function renderBlockquote(parts, context) {
       }
 
       const p = document.createElement("p");
-      appendInlineMarkdown(p, line, context);
+      appendInlineMarkdown(p, part.text, context);
       blockquote.appendChild(p);
     }
   }
@@ -1120,17 +1126,30 @@ function renderDefinitionList(items, context) {
   return dl;
 }
 
-function renderTaskListItem(checked, bodyText, context) {
+function renderTaskListItem(checked, bodyText, context, lineIndex = -1) {
   const item = document.createElement("p");
   item.className = "list-line task-line";
+  if (checked) {
+    item.classList.add("task-line--checked");
+  }
+  if (lineIndex >= 0) {
+    item.dataset.lineIndex = String(lineIndex);
+  }
 
   const marker = document.createElement("span");
   marker.className = "list-marker task-marker";
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
-  checkbox.disabled = true;
   checkbox.checked = checked;
   checkbox.className = "task-checkbox";
+  checkbox.setAttribute("aria-label", checked ? "标记为未完成" : "标记为已完成");
+  if (lineIndex >= 0 && vscode) {
+    checkbox.addEventListener("change", () => {
+      handleTaskCheckboxToggle(lineIndex, checkbox.checked, item, checkbox);
+    });
+  } else {
+    checkbox.disabled = true;
+  }
   marker.appendChild(checkbox);
 
   const body = document.createElement("span");
@@ -1138,6 +1157,38 @@ function renderTaskListItem(checked, bodyText, context) {
   appendInlineMarkdown(body, bodyText, context);
   item.append(marker, body);
   return item;
+}
+
+function handleTaskCheckboxToggle(lineIndex, checked, item, checkbox) {
+  if (document.body.classList.contains("editor-mode") || !vscode || lineIndex < 0) {
+    checkbox.checked = !checked;
+    return;
+  }
+
+  const lines = latestDocumentText.split(/\r?\n/);
+  if (lineIndex >= lines.length) {
+    checkbox.checked = !checked;
+    return;
+  }
+
+  const line = lines[lineIndex];
+  const blockquoteTask = /^(\s*>\s?)(\s*[-*+]\s+\[)([ xX])(\]\s+.+)$/.exec(line);
+  if (blockquoteTask) {
+    lines[lineIndex] = `${blockquoteTask[1]}${blockquoteTask[2]}${checked ? "x" : " "}${blockquoteTask[4]}`;
+  } else {
+    const task = /^(\s*[-*+]\s+\[)([ xX])(\]\s+.+)$/.exec(line);
+    if (!task) {
+      checkbox.checked = !checked;
+      return;
+    }
+    lines[lineIndex] = `${task[1]}${checked ? "x" : " "}${task[3]}`;
+  }
+
+  const nextText = lines.join("\n");
+  latestDocumentText = nextText;
+  item.classList.toggle("task-line--checked", checked);
+  checkbox.setAttribute("aria-label", checked ? "标记为未完成" : "标记为已完成");
+  vscode.postMessage({ type: "saveContent", content: nextText });
 }
 
 function renderFootnoteRef(id, context) {
@@ -1506,7 +1557,9 @@ function renderMarkdown(content, file) {
     if (task) {
       flushParagraph();
       flushTable();
-      fragment.appendChild(renderTaskListItem(task[1].toLowerCase() === "x", task[2].trim(), context));
+      fragment.appendChild(
+        renderTaskListItem(task[1].toLowerCase() === "x", task[2].trim(), context, lineIndex)
+      );
       continue;
     }
     const unordered = /^\s*[-*+]\s+(.+)$/.exec(line);

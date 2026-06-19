@@ -593,6 +593,15 @@ p {
   margin: 0;
   accent-color: var(--blue);
   vertical-align: middle;
+  cursor: pointer;
+}
+
+.task-checkbox:disabled {
+  cursor: default;
+}
+
+.task-line--checked .list-body {
+  color: var(--muted);
 }
 
 .markdown-blockquote {
