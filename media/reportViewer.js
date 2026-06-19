@@ -357,6 +357,7 @@ function formatOutlineNumber(number) {
 }
 
 function setOutlineLabel(element, outlineNumber, text, scope) {
+  const foldButton = element.querySelector(":scope > .content-fold");
   element.dataset.outlineNumber = String(outlineNumber || "");
   element.dataset.outlineText = String(text || "");
   element.dataset.outlineScope = scope;
@@ -375,13 +376,20 @@ function setOutlineLabel(element, outlineNumber, text, scope) {
     textSpan.textContent = label;
 
     element.append(numberSpan, textSpan);
-    return;
+  } else {
+    const textSpan = document.createElement("span");
+    textSpan.className = "outline-text";
+    textSpan.textContent = label;
+    element.appendChild(textSpan);
   }
 
-  const textSpan = document.createElement("span");
-  textSpan.className = "outline-text";
-  textSpan.textContent = label;
-  element.appendChild(textSpan);
+  if (foldButton) {
+    element.insertBefore(foldButton, element.firstChild);
+  }
+}
+
+function decorateReportHeading(element, level) {
+  element.classList.add("report-heading", `level-${Math.min(Math.max(level, 1), 6)}`);
 }
 
 function refreshOutlineLabels() {
@@ -510,7 +518,7 @@ function updateActiveToc() {
 
   for (const link of links) {
     const target = document.getElementById(link.dataset.anchor);
-    if (!target) {
+    if (!target || !isScrollSpyTarget(target)) {
       continue;
     }
     if (target.getBoundingClientRect().top <= referenceLine) {
@@ -637,16 +645,35 @@ function setActiveTocLink(link, { expandAncestors = true } = {}) {
   link.scrollIntoView({ block: "nearest" });
 }
 
+function isScrollSpyTarget(target) {
+  let branch = target.closest(".content-branch");
+  while (branch) {
+    const body = branch.querySelector(":scope > .content-branch-body");
+    if (branch.dataset.collapsed === "1" && body?.contains(target)) {
+      return false;
+    }
+    branch = branch.parentElement?.closest(".content-branch");
+  }
+  return true;
+}
+
 function expandTocAncestors(link) {
   let branch = link.closest(".toc-branch");
   while (branch) {
-    branch.dataset.collapsed = "0";
-    const foldButton = branch.querySelector(":scope > .toc-branch-row > .toc-fold");
-    if (foldButton) {
-      foldButton.setAttribute("aria-expanded", "true");
-      foldButton.textContent = "▾";
-    }
+    setTocBranchCollapsed(branch, false);
     branch = branch.parentElement?.closest(".toc-branch");
+  }
+}
+
+function setTocBranchCollapsed(branch, collapsed) {
+  if (!branch) {
+    return;
+  }
+  branch.dataset.collapsed = collapsed ? "1" : "0";
+  const foldButton = branch.querySelector(":scope > .toc-branch-row > .toc-fold");
+  if (foldButton) {
+    foldButton.setAttribute("aria-expanded", String(!collapsed));
+    foldButton.textContent = collapsed ? "▸" : "▾";
   }
 }
 
@@ -654,14 +681,109 @@ function toggleTocBranch(branch) {
   if (!branch) {
     return;
   }
-  const collapsed = branch.dataset.collapsed === "1";
-  branch.dataset.collapsed = collapsed ? "0" : "1";
-  const foldButton = branch.querySelector(":scope > .toc-branch-row > .toc-fold");
+  setTocBranchCollapsed(branch, branch.dataset.collapsed !== "1");
+  updateActiveToc();
+}
+
+function setContentBranchCollapsed(branch, collapsed) {
+  if (!branch) {
+    return;
+  }
+  branch.dataset.collapsed = collapsed ? "1" : "0";
+  const heading = branch.querySelector(":scope > .report-heading");
+  const foldButton = heading?.querySelector(".content-fold");
   if (foldButton) {
     foldButton.setAttribute("aria-expanded", String(!collapsed));
-    foldButton.textContent = collapsed ? "▾" : "▸";
+    foldButton.textContent = collapsed ? "▸" : "▾";
   }
+  syncTocBranchFromContent(branch.dataset.anchor, collapsed);
   updateActiveToc();
+}
+
+function toggleContentBranch(branch) {
+  if (!branch) {
+    return;
+  }
+  setContentBranchCollapsed(branch, branch.dataset.collapsed !== "1");
+}
+
+function syncTocBranchFromContent(anchorId, collapsed) {
+  if (!anchorId || !toc) {
+    return;
+  }
+  const tocLink = Array.from(toc.querySelectorAll("a[data-anchor]")).find(
+    (item) => item.dataset.anchor === anchorId
+  );
+  if (!tocLink) {
+    return;
+  }
+  const tocBranch = tocLink.closest(".toc-branch");
+  if (!tocBranch?.querySelector(":scope > .toc-branch-children")) {
+    return;
+  }
+  setTocBranchCollapsed(tocBranch, collapsed);
+}
+
+function attachContentFoldButton(branch) {
+  const body = branch.querySelector(":scope > .content-branch-body");
+  if (!body?.children.length) {
+    return;
+  }
+
+  const heading = branch.querySelector(":scope > .report-heading");
+  if (!heading || heading.querySelector(".content-fold")) {
+    return;
+  }
+
+  const foldButton = document.createElement("button");
+  foldButton.type = "button";
+  foldButton.className = "content-fold";
+  foldButton.setAttribute("aria-expanded", "true");
+  foldButton.setAttribute("aria-label", "折叠本节");
+  foldButton.textContent = "▾";
+  heading.insertBefore(foldButton, heading.firstChild);
+}
+
+function wrapContentInSections(container) {
+  const elements = Array.from(container.children);
+  container.replaceChildren();
+
+  const rootBody = document.createElement("div");
+  rootBody.className = "content-root";
+  container.appendChild(rootBody);
+
+  const stack = [{ level: 0, body: rootBody }];
+
+  for (const element of elements) {
+    if (isHeadingElement(element)) {
+      const level = Number.parseInt(element.tagName.slice(1), 10);
+      while (stack.length > 1 && stack[stack.length - 1].level >= level) {
+        const popped = stack.pop();
+        attachContentFoldButton(popped.branch);
+      }
+
+      const branch = document.createElement("div");
+      branch.className = "content-branch";
+      branch.dataset.collapsed = "0";
+      if (element.id) {
+        branch.dataset.anchor = element.id;
+      }
+
+      const branchBody = document.createElement("div");
+      branchBody.className = "content-branch-body";
+      branch.append(element, branchBody);
+      stack[stack.length - 1].body.appendChild(branch);
+      stack.push({ level, body: branchBody, branch });
+      continue;
+    }
+
+    stack[stack.length - 1].body.appendChild(element);
+  }
+
+  while (stack.length > 1) {
+    const popped = stack.pop();
+    attachContentFoldButton(popped.branch);
+  }
 }
 
 function pauseTocScrollSpy(durationMs = 900) {
@@ -932,7 +1054,11 @@ function renderFile(file) {
   const section = document.createElement("section");
   section.className = "report-file";
   section.id = `doc-${slugify(file.name)}`;
-  section.appendChild(renderMarkdown(file.content, file));
+  const markdownRoot = document.createElement("div");
+  markdownRoot.className = "markdown-body";
+  markdownRoot.appendChild(renderMarkdown(file.content, file));
+  wrapContentInSections(markdownRoot);
+  section.appendChild(markdownRoot);
   return section;
 }
 
@@ -1631,6 +1757,7 @@ function renderMarkdown(content, file) {
       flushTable();
       const level = Math.min(heading[1].length, 6);
       const h = document.createElement(`h${level}`);
+      decorateReportHeading(h, level);
       const numberedHeading = file.numberedHeadings?.[headingIndex];
       const rawText = heading[2].replace(/\s+#*$/, "").trim();
       const cleanText = numberedHeading?.cleanText || stripOutlinePrefix(rawText);
@@ -2354,6 +2481,13 @@ function handleReportClick(evt) {
   if (foldButton) {
     evt.preventDefault();
     toggleTocBranch(foldButton.closest(".toc-branch"));
+    return;
+  }
+
+  const contentFoldButton = evt.target.closest(".content-fold");
+  if (contentFoldButton) {
+    evt.preventDefault();
+    toggleContentBranch(contentFoldButton.closest(".content-branch"));
     return;
   }
 

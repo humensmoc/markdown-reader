@@ -378,18 +378,18 @@ html.rainbow-headings:not(.show-toc-numbers) .toc-file-title .outline-text {
   margin-bottom: 0;
 }
 
-.report-file > h1 {
+.report-file .report-heading.level-1 {
   font-size: calc(28px * var(--font-scale));
   margin: 0 0 22px;
   color: var(--text);
   letter-spacing: -0.02em;
 }
 
-.report-file > h2,
-.report-file > h3,
-.report-file > h4,
-.report-file > h5,
-.report-file > h6 {
+.report-file .report-heading.level-2,
+.report-file .report-heading.level-3,
+.report-file .report-heading.level-4,
+.report-file .report-heading.level-5,
+.report-file .report-heading.level-6 {
   scroll-margin-top: calc(var(--topbar-height) + 12px);
   color: var(--text);
   margin: 24px 0 10px;
@@ -397,80 +397,122 @@ html.rainbow-headings:not(.show-toc-numbers) .toc-file-title .outline-text {
   font-size: calc(23px * var(--font-scale));
 }
 
-html.heading-font-scale .report-file > h2 {
+.content-branch > .report-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.content-fold {
+  flex: 0 0 0;
+  width: 0;
+  height: 1.35em;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.82em;
+  line-height: 1.35em;
+  overflow: hidden;
+  opacity: 0;
+  cursor: pointer;
+  transition:
+    flex-basis 0.14s ease,
+    width 0.14s ease,
+    opacity 0.14s ease,
+    margin 0.14s ease;
+}
+
+.content-branch > .report-heading:hover > .content-fold,
+.content-fold:hover,
+.content-fold:focus-visible {
+  flex: 0 0 22px;
+  width: 22px;
+  margin-right: 2px;
+  opacity: 1;
+}
+
+.content-fold:hover {
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
+.content-branch[data-collapsed="1"] > .content-branch-body {
+  display: none;
+}
+
+html.heading-font-scale .report-file .report-heading.level-2 {
   font-size: calc(23px * var(--font-scale));
 }
 
-html.heading-font-scale .report-file > h3 {
+html.heading-font-scale .report-file .report-heading.level-3 {
   font-size: calc(19px * var(--font-scale));
 }
 
-html.heading-font-scale .report-file > h4 {
+html.heading-font-scale .report-file .report-heading.level-4 {
   font-size: calc(17px * var(--font-scale));
 }
 
-html.heading-font-scale .report-file > h5 {
+html.heading-font-scale .report-file .report-heading.level-5 {
   font-size: calc(16px * var(--font-scale));
 }
 
-html.heading-font-scale .report-file > h6 {
+html.heading-font-scale .report-file .report-heading.level-6 {
   font-size: calc(15px * var(--font-scale));
 }
 
-html.rainbow-headings:not(.show-content-numbers) .report-file > h1 .outline-text {
+html.rainbow-headings:not(.show-content-numbers) .report-file .report-heading.level-1 .outline-text {
   color: #e53935;
 }
 
-html.rainbow-headings:not(.show-content-numbers) .report-file > h2 .outline-text {
+html.rainbow-headings:not(.show-content-numbers) .report-file .report-heading.level-2 .outline-text {
   color: #f57c00;
 }
 
-html.rainbow-headings:not(.show-content-numbers) .report-file > h3 .outline-text {
+html.rainbow-headings:not(.show-content-numbers) .report-file .report-heading.level-3 .outline-text {
   color: #f9a825;
 }
 
-html.rainbow-headings:not(.show-content-numbers) .report-file > h4 .outline-text {
+html.rainbow-headings:not(.show-content-numbers) .report-file .report-heading.level-4 .outline-text {
   color: #43a047;
 }
 
-html.rainbow-headings:not(.show-content-numbers) .report-file > h5 .outline-text {
+html.rainbow-headings:not(.show-content-numbers) .report-file .report-heading.level-5 .outline-text {
   color: #00838f;
 }
 
-html.rainbow-headings:not(.show-content-numbers) .report-file > h6 .outline-text {
+html.rainbow-headings:not(.show-content-numbers) .report-file .report-heading.level-6 .outline-text {
   color: #8e24aa;
 }
 
-html.rainbow-headings.show-content-numbers .report-file > h1 .outline-number {
+html.rainbow-headings.show-content-numbers .report-file .report-heading.level-1 .outline-number {
   color: #e53935;
 }
 
-html.rainbow-headings.show-content-numbers .report-file > h2 .outline-number {
+html.rainbow-headings.show-content-numbers .report-file .report-heading.level-2 .outline-number {
   color: #f57c00;
 }
 
-html.rainbow-headings.show-content-numbers .report-file > h3 .outline-number {
+html.rainbow-headings.show-content-numbers .report-file .report-heading.level-3 .outline-number {
   color: #f9a825;
 }
 
-html.rainbow-headings.show-content-numbers .report-file > h4 .outline-number {
+html.rainbow-headings.show-content-numbers .report-file .report-heading.level-4 .outline-number {
   color: #43a047;
 }
 
-html.rainbow-headings.show-content-numbers .report-file > h5 .outline-number {
+html.rainbow-headings.show-content-numbers .report-file .report-heading.level-5 .outline-number {
   color: #00838f;
 }
 
-html.rainbow-headings.show-content-numbers .report-file > h6 .outline-number {
+html.rainbow-headings.show-content-numbers .report-file .report-heading.level-6 .outline-number {
   color: #8e24aa;
 }
 
-html.rainbow-headings.show-content-numbers .report-file > h1 .outline-text,
-html.rainbow-headings.show-content-numbers .report-file > h2 .outline-text,
-html.rainbow-headings.show-content-numbers .report-file > h3 .outline-text,
-html.rainbow-headings.show-content-numbers .report-file > h4 .outline-text,
-html.rainbow-headings.show-content-numbers .report-file > h5 .outline-text,
-html.rainbow-headings.show-content-numbers .report-file > h6 .outline-text {
+html.rainbow-headings.show-content-numbers .report-file .report-heading .outline-text {
   color: var(--text);
 }
 
@@ -479,23 +521,23 @@ html.rainbow-headings.show-toc-numbers .toc a .outline-text {
 }
 
 html.rainbow-headings:not(.show-toc-numbers) .toc a.toc-heading.level-1 .outline-text {
-  color: #f57c00;
+  color: #e53935;
 }
 
 html.rainbow-headings:not(.show-toc-numbers) .toc a.toc-heading.level-2 .outline-text {
-  color: #f9a825;
+  color: #f57c00;
 }
 
 html.rainbow-headings:not(.show-toc-numbers) .toc a.toc-heading.level-3 .outline-text {
-  color: #43a047;
+  color: #f9a825;
 }
 
 html.rainbow-headings:not(.show-toc-numbers) .toc a.toc-heading.level-4 .outline-text {
-  color: #00838f;
+  color: #43a047;
 }
 
 html.rainbow-headings:not(.show-toc-numbers) .toc a.toc-heading.level-5 .outline-text {
-  color: #8e24aa;
+  color: #00838f;
 }
 
 html.rainbow-headings:not(.show-toc-numbers) .toc a.toc-heading.level-6 .outline-text {
@@ -507,23 +549,23 @@ html.rainbow-headings.show-toc-numbers .toc a.toc-file-title .outline-number {
 }
 
 html.rainbow-headings.show-toc-numbers .toc a.toc-heading.level-1 .outline-number {
-  color: #f57c00;
+  color: #e53935;
 }
 
 html.rainbow-headings.show-toc-numbers .toc a.toc-heading.level-2 .outline-number {
-  color: #f9a825;
+  color: #f57c00;
 }
 
 html.rainbow-headings.show-toc-numbers .toc a.toc-heading.level-3 .outline-number {
-  color: #43a047;
+  color: #f9a825;
 }
 
 html.rainbow-headings.show-toc-numbers .toc a.toc-heading.level-4 .outline-number {
-  color: #00838f;
+  color: #43a047;
 }
 
 html.rainbow-headings.show-toc-numbers .toc a.toc-heading.level-5 .outline-number {
-  color: #8e24aa;
+  color: #00838f;
 }
 
 html.rainbow-headings.show-toc-numbers .toc a.toc-heading.level-6 .outline-number {
