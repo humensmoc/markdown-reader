@@ -932,11 +932,25 @@ body.mermaid-modal-open {
   align-items: center;
   justify-content: center;
   padding: 48px 24px 24px;
+  cursor: default;
+  user-select: none;
+}
+
+.mermaid-modal-viewport.is-draggable {
+  cursor: grab;
+}
+
+.mermaid-modal-viewport.is-dragging {
+  cursor: grabbing;
 }
 
 .mermaid-modal-content {
   transform-origin: center center;
   transition: transform 0.12s ease;
+}
+
+.mermaid-modal-viewport.is-dragging .mermaid-modal-content {
+  transition: none;
 }
 
 .mermaid-modal-content svg {

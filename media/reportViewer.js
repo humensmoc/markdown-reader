@@ -64,6 +64,10 @@ window.addEventListener("message", (event) => {
 document.addEventListener("click", handleReportClick);
 document.addEventListener("click", handleReaderSettingsOutsideClick);
 document.addEventListener("click", handleMermaidModalClick);
+document.addEventListener("wheel", handleMermaidModalWheel, { passive: false });
+document.addEventListener("mousedown", handleMermaidModalDragStart);
+document.addEventListener("mousemove", handleMermaidModalDragMove);
+document.addEventListener("mouseup", handleMermaidModalDragEnd);
 document.addEventListener("keydown", handleMermaidModalKeydown);
 
 if (vscode) {
@@ -1398,6 +1402,8 @@ function showMermaidError(block, source, err) {
 }
 
 let mermaidModalState = null;
+const MERMAID_MODAL_SCALE_MIN = 0.4;
+const MERMAID_MODAL_SCALE_MAX = 4;
 
 function ensureMermaidModal() {
   if (document.getElementById("mermaidModal")) {
@@ -1447,8 +1453,17 @@ function openMermaidModal(block) {
   }
 
   content.replaceChildren(svgRoot.cloneNode(true));
-  mermaidModalState = { scale: 1 };
-  applyMermaidModalScale(content);
+  mermaidModalState = {
+    scale: 1,
+    offsetX: 0,
+    offsetY: 0,
+    isDragging: false,
+    dragStartX: 0,
+    dragStartY: 0,
+    dragOriginX: 0,
+    dragOriginY: 0
+  };
+  applyMermaidModalTransform();
   modal.hidden = false;
   document.body.classList.add("mermaid-modal-open");
   modal.querySelector('[data-mermaid-action="close"]')?.focus();
@@ -1462,15 +1477,126 @@ function closeMermaidModal() {
 
   modal.hidden = true;
   document.body.classList.remove("mermaid-modal-open");
+  modal.classList.remove("is-dragging");
   modal.querySelector(".mermaid-modal-content")?.replaceChildren();
+  modal.querySelector(".mermaid-modal-viewport")?.classList.remove("is-draggable");
+  modal.querySelector(".mermaid-modal-viewport")?.classList.remove("is-dragging");
   mermaidModalState = null;
 }
 
-function applyMermaidModalScale(contentEl) {
-  if (!contentEl || !mermaidModalState) {
+function applyMermaidModalTransform() {
+  if (!mermaidModalState) {
     return;
   }
-  contentEl.style.transform = `scale(${mermaidModalState.scale})`;
+
+  const modal = document.getElementById("mermaidModal");
+  const contentEl = modal?.querySelector(".mermaid-modal-content");
+  const viewport = modal?.querySelector(".mermaid-modal-viewport");
+  if (!contentEl || !viewport) {
+    return;
+  }
+
+  contentEl.style.transform = `translate(${mermaidModalState.offsetX}px, ${mermaidModalState.offsetY}px) scale(${mermaidModalState.scale})`;
+  viewport.classList.toggle("is-draggable", mermaidModalState.scale > 1.001);
+  viewport.classList.toggle("is-dragging", mermaidModalState.isDragging);
+}
+
+function updateMermaidModalScale(nextScale) {
+  if (!mermaidModalState) {
+    return;
+  }
+  mermaidModalState.scale = Math.min(MERMAID_MODAL_SCALE_MAX, Math.max(MERMAID_MODAL_SCALE_MIN, nextScale));
+  if (Math.abs(mermaidModalState.scale - 1) < 0.001) {
+    mermaidModalState.offsetX = 0;
+    mermaidModalState.offsetY = 0;
+  }
+  applyMermaidModalTransform();
+}
+
+function resetMermaidModalTransform() {
+  if (!mermaidModalState) {
+    return;
+  }
+  mermaidModalState.scale = 1;
+  mermaidModalState.offsetX = 0;
+  mermaidModalState.offsetY = 0;
+  mermaidModalState.isDragging = false;
+  applyMermaidModalTransform();
+}
+
+function ensureMermaidModalOpen() {
+  const modal = document.getElementById("mermaidModal");
+  if (!modal || modal.hidden || !mermaidModalState) {
+    return null;
+  }
+  return modal;
+}
+
+function handleMermaidModalWheel(event) {
+  const viewport = event.target.closest("#mermaidModal .mermaid-modal-viewport");
+  if (!viewport) {
+    return;
+  }
+  if (!ensureMermaidModalOpen()) {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+
+  const delta = event.deltaY;
+  if (!Number.isFinite(delta) || delta === 0) {
+    return;
+  }
+  const step = delta < 0 ? 0.12 : -0.12;
+  updateMermaidModalScale((mermaidModalState?.scale || 1) + step);
+}
+
+function handleMermaidModalDragStart(event) {
+  if (event.button !== 0) {
+    return;
+  }
+
+  const viewport = event.target.closest("#mermaidModal .mermaid-modal-viewport");
+  if (!viewport) {
+    return;
+  }
+  if (!ensureMermaidModalOpen()) {
+    return;
+  }
+  if (!mermaidModalState || mermaidModalState.scale <= 1.001) {
+    return;
+  }
+
+  event.preventDefault();
+  mermaidModalState.isDragging = true;
+  mermaidModalState.dragStartX = event.clientX;
+  mermaidModalState.dragStartY = event.clientY;
+  mermaidModalState.dragOriginX = mermaidModalState.offsetX;
+  mermaidModalState.dragOriginY = mermaidModalState.offsetY;
+  applyMermaidModalTransform();
+}
+
+function handleMermaidModalDragMove(event) {
+  if (!mermaidModalState?.isDragging) {
+    return;
+  }
+  if (!ensureMermaidModalOpen()) {
+    return;
+  }
+
+  event.preventDefault();
+  mermaidModalState.offsetX = mermaidModalState.dragOriginX + (event.clientX - mermaidModalState.dragStartX);
+  mermaidModalState.offsetY = mermaidModalState.dragOriginY + (event.clientY - mermaidModalState.dragStartY);
+  applyMermaidModalTransform();
+}
+
+function handleMermaidModalDragEnd() {
+  if (!mermaidModalState?.isDragging) {
+    return;
+  }
+  mermaidModalState.isDragging = false;
+  applyMermaidModalTransform();
 }
 
 function handleMermaidModalClick(event) {
@@ -1506,13 +1632,12 @@ function handleMermaidModalClick(event) {
   }
 
   if (action === "zoom-in") {
-    mermaidModalState.scale = Math.min(mermaidModalState.scale + 0.2, 4);
+    updateMermaidModalScale(mermaidModalState.scale + 0.2);
   } else if (action === "zoom-out") {
-    mermaidModalState.scale = Math.max(mermaidModalState.scale - 0.2, 0.4);
+    updateMermaidModalScale(mermaidModalState.scale - 0.2);
   } else if (action === "zoom-reset") {
-    mermaidModalState.scale = 1;
+    resetMermaidModalTransform();
   }
-  applyMermaidModalScale(content);
 }
 
 function handleMermaidModalKeydown(event) {
