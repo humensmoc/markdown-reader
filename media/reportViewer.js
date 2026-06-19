@@ -1159,6 +1159,130 @@ function renderTaskListItem(checked, bodyText, context, lineIndex = -1) {
   return item;
 }
 
+function parseTableCellTask(cellText) {
+  const value = String(cellText || "").trim();
+  if (!value) return null;
+
+  const listTask = /^([-*+]\s+\[)([ xX])(\])(?:\s+(.+))?$/.exec(value);
+  if (listTask) {
+    return {
+      checked: listTask[2].toLowerCase() === "x",
+      bodyText: (listTask[4] || "").trim()
+    };
+  }
+
+  const bracketTask = /^(\[)([ xX])(\])(?:\s+(.+))?$/.exec(value);
+  if (bracketTask) {
+    return {
+      checked: bracketTask[2].toLowerCase() === "x",
+      bodyText: (bracketTask[4] || "").trim()
+    };
+  }
+
+  return null;
+}
+
+function replaceCellTaskMarker(cell, checked) {
+  const value = String(cell);
+  const trimmed = value.trim();
+  const listMatch = /^([-*+]\s+\[)([ xX])(\])(.*)$/.exec(trimmed);
+  if (listMatch) {
+    const nextInner = `${listMatch[1]}${checked ? "x" : " "}${listMatch[3]}${listMatch[4]}`;
+    return value.replace(trimmed, nextInner);
+  }
+
+  const bracketMatch = /^(\[)([ xX])(\])(.*)$/.exec(trimmed);
+  if (bracketMatch) {
+    const nextInner = `${bracketMatch[1]}${checked ? "x" : " "}${bracketMatch[3]}${bracketMatch[4]}`;
+    return value.replace(trimmed, nextInner);
+  }
+
+  return null;
+}
+
+function replaceTableRowCellTask(line, cellIndex, checked) {
+  const cells = String(line || "")
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|");
+
+  if (cellIndex < 0 || cellIndex >= cells.length) return null;
+
+  const updatedCell = replaceCellTaskMarker(cells[cellIndex], checked);
+  if (updatedCell === null) return null;
+
+  cells[cellIndex] = updatedCell;
+  return `|${cells.join("|")}|`;
+}
+
+function handleTableCellTaskToggle(lineIndex, cellIndex, checked, checkbox, wrapper) {
+  if (document.body.classList.contains("editor-mode") || !vscode || lineIndex < 0) {
+    checkbox.checked = !checked;
+    return;
+  }
+
+  const lines = latestDocumentText.split(/\r?\n/);
+  if (lineIndex >= lines.length) {
+    checkbox.checked = !checked;
+    return;
+  }
+
+  const nextLine = replaceTableRowCellTask(lines[lineIndex], cellIndex, checked);
+  if (nextLine === null) {
+    checkbox.checked = !checked;
+    return;
+  }
+
+  lines[lineIndex] = nextLine;
+  const nextText = lines.join("\n");
+  latestDocumentText = nextText;
+  wrapper.classList.toggle("table-task-cell--checked", checked);
+  checkbox.setAttribute("aria-label", checked ? "标记为未完成" : "标记为已完成");
+  vscode.postMessage({ type: "saveContent", content: nextText });
+}
+
+function appendTableCellContent(parent, cellText, context, lineIndex, cellIndex) {
+  const task = parseTableCellTask(cellText);
+  if (!task) {
+    appendInlineMarkdown(parent, cellText, context);
+    return;
+  }
+
+  const wrapper = document.createElement("span");
+  wrapper.className = "table-task-cell";
+  if (task.checked) {
+    wrapper.classList.add("table-task-cell--checked");
+  }
+
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = task.checked;
+  checkbox.className = "task-checkbox";
+  checkbox.setAttribute("aria-label", task.checked ? "标记为未完成" : "标记为已完成");
+  if (lineIndex >= 0 && vscode) {
+    checkbox.addEventListener("change", () => {
+      handleTableCellTaskToggle(lineIndex, cellIndex, checkbox.checked, checkbox, wrapper);
+    });
+  } else {
+    checkbox.disabled = true;
+  }
+  wrapper.appendChild(checkbox);
+
+  if (task.bodyText) {
+    const body = document.createElement("span");
+    body.className = "table-task-body";
+    appendInlineMarkdown(body, task.bodyText, context);
+    wrapper.appendChild(body);
+  }
+
+  parent.appendChild(wrapper);
+}
+
+function getTableRowCells(row) {
+  return row && row.cells ? row.cells : row;
+}
+
 function handleTaskCheckboxToggle(lineIndex, checked, item, checkbox) {
   if (document.body.classList.contains("editor-mode") || !vscode || lineIndex < 0) {
     checkbox.checked = !checked;
@@ -1491,7 +1615,7 @@ function renderMarkdown(content, file) {
     }
     if (isTableRow(line)) {
       flushParagraph();
-      tableRows.push(parseTableRow(line));
+      tableRows.push({ cells: parseTableRow(line), lineIndex });
       continue;
     }
     const sourceLine = parseSourceLine(line);
@@ -1970,7 +2094,8 @@ function parseTableRow(line) {
 }
 
 function isTableSeparator(row) {
-  return row.length > 0 && row.every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
+  const cells = getTableRowCells(row);
+  return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(String(cell).trim()));
 }
 
 function renderTable(rows, context = {}) {
@@ -1983,7 +2108,7 @@ function renderTable(rows, context = {}) {
   if (hasHeader) {
     const thead = document.createElement("thead");
     const tr = document.createElement("tr");
-    for (const cell of rows[0]) {
+    for (const cell of getTableRowCells(rows[0])) {
       const th = document.createElement("th");
       appendInlineMarkdown(th, cell, context);
       tr.appendChild(th);
@@ -1996,10 +2121,12 @@ function renderTable(rows, context = {}) {
   const bodyRows = hasHeader ? rows.slice(2) : rows;
   for (const row of bodyRows) {
     if (isTableSeparator(row)) continue;
+    const cells = getTableRowCells(row);
+    const lineIndex = row.lineIndex ?? -1;
     const tr = document.createElement("tr");
-    for (const cell of row) {
+    for (let cellIndex = 0; cellIndex < cells.length; cellIndex += 1) {
       const td = document.createElement("td");
-      appendInlineMarkdown(td, cell, context);
+      appendTableCellContent(td, cells[cellIndex], context, lineIndex, cellIndex);
       tr.appendChild(td);
     }
     tbody.appendChild(tr);

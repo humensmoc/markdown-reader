@@ -604,6 +604,23 @@ p {
   color: var(--muted);
 }
 
+.table-task-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 18px;
+}
+
+.table-task-cell .table-task-body {
+  align-self: flex-start;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.table-task-cell--checked .table-task-body {
+  color: var(--muted);
+}
+
 .markdown-blockquote {
   margin: 14px 0;
   padding: 10px 14px;
