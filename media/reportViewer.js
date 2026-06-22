@@ -33,6 +33,13 @@ let editorDirty = false;
 let activeInternalJump = null;
 let internalLinkSerial = 0;
 let blockDragState = null;
+const citeSourcePreviewIndex = new Map();
+let citeHoverPopover = null;
+let citeHoverShowTimer = null;
+let citeHoverHideTimer = null;
+let citeHoverActiveRef = null;
+let citeHoverPointerInPopover = false;
+let hasRenderedDocument = false;
 
 const SETTINGS_KEYS = {
   fontScale: "meowReportMarkdown.fontScale",
@@ -69,6 +76,7 @@ initTocWheelIsolation();
 initReaderSettings();
 initEditorMode();
 initBlockDrag();
+initCiteHover();
 
 window.addEventListener("message", (event) => {
   const message = event.data;
@@ -77,11 +85,35 @@ window.addEventListener("message", (event) => {
     return;
   }
   if (message?.type === "render") {
-    latestDocumentText = message?.payload?.files?.[0]?.content || "";
+    const nextText = message?.payload?.files?.[0]?.content || "";
+    if (
+      hasRenderedDocument &&
+      document.body.classList.contains("wysiwyg-mode") &&
+      nextText === latestDocumentText
+    ) {
+      return;
+    }
+    latestDocumentText = nextText;
+    hasRenderedDocument = true;
     if (document.body.classList.contains("editor-mode") && reportEditor && !editorDirty) {
       reportEditor.value = latestDocumentText;
     }
+    hideExternalChangeBanner(false);
     renderReport(message.payload);
+  }
+  if (message?.type === "documentChanged") {
+    handleExternalDocumentChanged(message);
+  }
+  if (message?.type === "reloadDocument") {
+    latestDocumentText = message?.content || latestDocumentText;
+    editorDirty = false;
+    hideExternalChangeBanner(false);
+    if (reportEditor) {
+      reportEditor.value = latestDocumentText;
+    }
+    if (message?.payload) {
+      renderReport(message.payload);
+    }
   }
 });
 
@@ -200,6 +232,10 @@ function initReaderSettings() {
       enabled: readerSettings.autoOpenReaderMode
     });
   });
+
+  document.getElementById("reloadDocumentBtn")?.addEventListener("click", () => {
+    requestDocumentReload();
+  });
 }
 
 function applyExtensionSettings(settings) {
@@ -251,7 +287,7 @@ function initEditorMode() {
     const nextText = reportEditor.value;
     latestDocumentText = nextText;
     editorDirty = false;
-    vscode.postMessage({ type: "saveContent", content: nextText });
+    vscode.postMessage({ type: "saveContent", content: nextText, persist: true });
     exitEditorMode({ discardChanges: false, skipConfirm: true });
   });
 
@@ -261,7 +297,297 @@ function initEditorMode() {
 
   reportEditor.addEventListener("input", () => {
     editorDirty = reportEditor.value !== latestDocumentText;
+    postEditorState();
   });
+}
+
+function postEditorState() {
+  if (!vscode) {
+    return;
+  }
+  vscode.postMessage({
+    type: "editorState",
+    dirty: editorDirty,
+    inEditorMode: document.body.classList.contains("editor-mode"),
+    inWysiwygMode: document.body.classList.contains("wysiwyg-mode")
+  });
+}
+
+function parseSourcePreview(body) {
+  const text = String(body || "").trim();
+  if (!text) {
+    return { title: "", summary: "", url: "", links: [] };
+  }
+
+  const links = [];
+  const mdLinkPattern = /\[([^\]]*)\]\(([^)]+)\)/g;
+  let match;
+  while ((match = mdLinkPattern.exec(text)) !== null) {
+    const href = trimUrlTail(match[2].trim());
+    if (/^(https?:|mailto:)/i.test(href)) {
+      links.push({ label: (match[1] || href).trim() || href, href });
+    }
+  }
+
+  const urlPattern = /https?:\/\/[^\s<>"')\]]+/gi;
+  while ((match = urlPattern.exec(text)) !== null) {
+    const href = trimUrlTail(match[0]);
+    if (!links.some((item) => item.href === href)) {
+      links.push({ label: href, href });
+    }
+  }
+
+  let title = text;
+  let summary = "";
+  let url = links[0]?.href || "";
+  let working = text;
+
+  const trailingUrlMatch = /^(.+?)\s-\s+(https?:\/\/\S+)\s*$/i.exec(text);
+  if (trailingUrlMatch) {
+    working = trailingUrlMatch[1].trim();
+    url = trimUrlTail(trailingUrlMatch[2]);
+  }
+
+  const emDashParts = working.split(/\s—\s/);
+  if (emDashParts.length >= 2) {
+    title = emDashParts[0].trim();
+    summary = emDashParts.slice(1).join(" — ").trim();
+  } else {
+    title = working;
+  }
+
+  if (url && !links.some((item) => item.href === url)) {
+    links.unshift({ label: url, href: url });
+  }
+
+  return { title, summary, url, links };
+}
+
+function ensureCiteHoverPopover() {
+  if (citeHoverPopover) {
+    return citeHoverPopover;
+  }
+
+  const popover = document.createElement("div");
+  popover.id = "citeHoverPopover";
+  popover.className = "cite-hover-popover";
+  popover.hidden = true;
+  popover.setAttribute("role", "tooltip");
+
+  popover.addEventListener("mouseenter", () => {
+    citeHoverPointerInPopover = true;
+    window.clearTimeout(citeHoverHideTimer);
+  });
+  popover.addEventListener("mouseleave", () => {
+    citeHoverPointerInPopover = false;
+    hideCiteHoverPopover();
+  });
+  popover.addEventListener("click", (event) => {
+    const link = event.target.closest("a[href]");
+    if (!link || !vscode) {
+      return;
+    }
+    const href = link.getAttribute("href");
+    if (!href || href.startsWith("#")) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (/^(https?:|mailto:)/i.test(href)) {
+      vscode.postMessage({ type: "openExternal", href });
+    }
+  });
+
+  document.body.appendChild(popover);
+  citeHoverPopover = popover;
+  return popover;
+}
+
+function hideCiteHoverPopover() {
+  window.clearTimeout(citeHoverShowTimer);
+  window.clearTimeout(citeHoverHideTimer);
+  citeHoverActiveRef = null;
+  if (citeHoverPopover) {
+    citeHoverPopover.hidden = true;
+    citeHoverPopover.innerHTML = "";
+  }
+}
+
+function scheduleHideCiteHoverPopover() {
+  window.clearTimeout(citeHoverHideTimer);
+  citeHoverHideTimer = window.setTimeout(() => {
+    if (!citeHoverPointerInPopover) {
+      hideCiteHoverPopover();
+    }
+  }, 120);
+}
+
+function showCiteHoverPopover(citeRef) {
+  const sourceId = citeRef?.dataset?.sourceTarget;
+  const preview = sourceId ? citeSourcePreviewIndex.get(sourceId) : null;
+  if (!preview) {
+    return;
+  }
+
+  const popover = ensureCiteHoverPopover();
+  citeHoverActiveRef = citeRef;
+
+  const titleEl = document.createElement("div");
+  titleEl.className = "cite-hover-title";
+  titleEl.textContent = preview.title || `来源 ${citeRef.textContent}`;
+
+  popover.replaceChildren(titleEl);
+
+  if (preview.summary) {
+    const summaryEl = document.createElement("div");
+    summaryEl.className = "cite-hover-summary";
+    summaryEl.textContent = preview.summary;
+    popover.appendChild(summaryEl);
+  }
+
+  if (preview.links.length) {
+    const linksEl = document.createElement("div");
+    linksEl.className = "cite-hover-links";
+    for (const link of preview.links) {
+      const anchor = document.createElement("a");
+      anchor.href = link.href;
+      anchor.textContent = link.label;
+      anchor.target = "_blank";
+      anchor.rel = "noopener noreferrer";
+      linksEl.appendChild(anchor);
+    }
+    popover.appendChild(linksEl);
+  } else if (preview.url) {
+    const linksEl = document.createElement("div");
+    linksEl.className = "cite-hover-links";
+    const anchor = document.createElement("a");
+    anchor.href = preview.url;
+    anchor.textContent = preview.url;
+    anchor.target = "_blank";
+    anchor.rel = "noopener noreferrer";
+    linksEl.appendChild(anchor);
+    popover.appendChild(linksEl);
+  }
+
+  popover.hidden = false;
+  const rect = citeRef.getBoundingClientRect();
+  const margin = 8;
+  let top = rect.bottom + margin;
+  let left = rect.left;
+
+  popover.style.top = `${top}px`;
+  popover.style.left = `${left}px`;
+
+  const popRect = popover.getBoundingClientRect();
+  if (left + popRect.width > window.innerWidth - margin) {
+    left = Math.max(margin, window.innerWidth - popRect.width - margin);
+  }
+  if (top + popRect.height > window.innerHeight - margin) {
+    top = Math.max(margin, rect.top - popRect.height - margin);
+  }
+  popover.style.top = `${top}px`;
+  popover.style.left = `${left}px`;
+}
+
+function initCiteHover() {
+  if (!reportContent) {
+    return;
+  }
+
+  reportContent.addEventListener("mouseover", (event) => {
+    const citeRef = event.target.closest("button.cite-ref");
+    if (!citeRef || citeRef.closest(".source-line")) {
+      return;
+    }
+    window.clearTimeout(citeHoverHideTimer);
+    if (citeHoverActiveRef === citeRef && citeHoverPopover && !citeHoverPopover.hidden) {
+      return;
+    }
+    window.clearTimeout(citeHoverShowTimer);
+    citeHoverShowTimer = window.setTimeout(() => {
+      showCiteHoverPopover(citeRef);
+    }, 200);
+  });
+
+  reportContent.addEventListener("mouseout", (event) => {
+    const citeRef = event.target.closest("button.cite-ref");
+    if (!citeRef || citeRef.closest(".source-line")) {
+      return;
+    }
+    const related = event.relatedTarget;
+    if (related && (citeHoverPopover?.contains(related) || citeRef.contains(related))) {
+      return;
+    }
+    window.clearTimeout(citeHoverShowTimer);
+    scheduleHideCiteHoverPopover();
+  });
+}
+
+let externalChangeBanner = null;
+let pendingExternalPayload = null;
+
+function ensureExternalChangeBanner() {
+  if (externalChangeBanner) {
+    return externalChangeBanner;
+  }
+  const banner = document.createElement("div");
+  banner.id = "externalChangeBanner";
+  banner.className = "external-change-banner";
+  banner.hidden = true;
+  banner.innerHTML =
+    '<span class="external-change-text">文件已在外部修改</span>' +
+    '<div class="external-change-actions">' +
+    '<button type="button" data-action="reload">重新加载</button>' +
+    '<button type="button" data-action="keep">保留我的编辑</button>' +
+    "</div>";
+  banner.addEventListener("click", (event) => {
+    const action = event.target.closest("button")?.dataset?.action;
+    if (action === "reload") {
+      acceptExternalDocumentReload();
+    } else if (action === "keep") {
+      hideExternalChangeBanner(true);
+    }
+  });
+  document.body.appendChild(banner);
+  externalChangeBanner = banner;
+  return banner;
+}
+
+function handleExternalDocumentChanged(message) {
+  pendingExternalPayload = message?.payload || null;
+  latestDocumentText = message?.content || latestDocumentText;
+  if (document.body.classList.contains("editor-mode") && editorDirty) {
+    ensureExternalChangeBanner().hidden = false;
+    return;
+  }
+  if (message?.payload) {
+    renderReport(message.payload);
+  }
+}
+
+function acceptExternalDocumentReload() {
+  editorDirty = false;
+  hideExternalChangeBanner(false);
+  postEditorState();
+  if (pendingExternalPayload) {
+    renderReport(pendingExternalPayload);
+    pendingExternalPayload = null;
+    return;
+  }
+  vscode?.postMessage({ type: "requestReload" });
+}
+
+function hideExternalChangeBanner(keepPending) {
+  if (externalChangeBanner) {
+    externalChangeBanner.hidden = true;
+  }
+  if (!keepPending) {
+    pendingExternalPayload = null;
+  }
+}
+
+function requestDocumentReload() {
+  vscode?.postMessage({ type: "requestReload" });
 }
 
 function enterEditorMode() {
@@ -275,11 +601,17 @@ function enterEditorMode() {
   reportEditor.value = latestDocumentText;
   editorDirty = false;
   document.body.classList.add("editor-mode");
+  document.body.classList.remove("wysiwyg-mode");
+  const wysiwygInput = document.getElementById("enableWysiwygMode");
+  if (wysiwygInput) {
+    wysiwygInput.checked = false;
+  }
   editorModeToggle.hidden = true;
   editorSaveBtn.hidden = false;
   editorCancelBtn.hidden = false;
   applyBlockDragSetting();
   window.requestAnimationFrame(() => reportEditor.focus());
+  postEditorState();
 }
 
 function exitEditorMode({ discardChanges = false, skipConfirm = false } = {}) {
@@ -302,6 +634,7 @@ function exitEditorMode({ discardChanges = false, skipConfirm = false } = {}) {
   editorSaveBtn.hidden = true;
   editorCancelBtn.hidden = true;
   applyBlockDragSetting();
+  postEditorState();
 }
 
 function loadReaderSettings() {
@@ -830,7 +1163,11 @@ function wrapContentInSections(container) {
 }
 
 function isBlockDragEnabled() {
-  return Boolean(readerSettings.enableBlockDrag) && !document.body.classList.contains("editor-mode");
+  return (
+    Boolean(readerSettings.enableBlockDrag) &&
+    !document.body.classList.contains("editor-mode") &&
+    !document.body.classList.contains("wysiwyg-mode")
+  );
 }
 
 function applyBlockDragSetting() {
@@ -851,6 +1188,15 @@ function applyBlockDragSetting() {
     root.querySelectorAll("p.md-block:not(.list-line)").forEach((paragraph) => {
       paragraph.classList.add("md-block-draggable");
     });
+    root
+      .querySelectorAll(
+        "pre.md-block, .mermaid-block.md-block, .table-wrap.md-block, blockquote.md-block, .list-line.md-block:not(.source-line), .md-html-block.md-block"
+      )
+      .forEach((block) => {
+        if (!block.closest(".footnotes")) {
+          block.classList.add("md-block-draggable");
+        }
+      });
     attachBlockDragHandles(root);
   }
 }
@@ -1009,7 +1355,7 @@ function attachBlockDragHandles(root) {
     branch.insertBefore(createMdDragHandle(), branch.firstChild);
   }
 
-  for (const block of root.querySelectorAll("p.md-block-draggable")) {
+  for (const block of root.querySelectorAll(".md-block-draggable:not(.content-branch)")) {
     if (block.querySelector(":scope > .md-drag-handle")) {
       continue;
     }
@@ -1017,16 +1363,42 @@ function attachBlockDragHandles(root) {
   }
 }
 
+function findBlockDropContainer(clientX, clientY, draggingBlock) {
+  const pointTarget = document.elementFromPoint(clientX, clientY);
+  if (!pointTarget || !reportContent.contains(pointTarget)) {
+    return null;
+  }
+  if (pointTarget.closest(".footnotes, .source-line, .md-drag-handle")) {
+    return null;
+  }
+
+  let container =
+    pointTarget.closest(".content-branch-body") || pointTarget.closest(".content-root");
+  if (!container || !reportContent.contains(container)) {
+    return null;
+  }
+
+  if (draggingBlock.classList.contains("content-branch") && draggingBlock.contains(container)) {
+    return null;
+  }
+
+  return container;
+}
+
+function getBlockDropSiblings(container, draggingBlock) {
+  return Array.from(container.children).filter(
+    (child) =>
+      child !== draggingBlock &&
+      (child.classList.contains("md-block-draggable") || child.classList.contains("content-branch"))
+  );
+}
+
 function clearBlockDropIndicators() {
   document.querySelectorAll(".md-drop-indicator").forEach((node) => node.remove());
 }
 
 function getBlockDropTarget(container, clientY, draggingBlock) {
-  const siblings = Array.from(container.children).filter(
-    (child) =>
-      child !== draggingBlock &&
-      (child.classList.contains("md-block-draggable") || child.classList.contains("content-branch"))
-  );
+  const siblings = getBlockDropSiblings(container, draggingBlock);
 
   let closest = null;
   let closestOffset = Number.NEGATIVE_INFINITY;
@@ -1062,7 +1434,7 @@ function applyMarkdownReorder() {
     return;
   }
   latestDocumentText = nextText;
-  vscode.postMessage({ type: "saveContent", content: nextText });
+  vscode.postMessage({ type: "saveContent", content: nextText, persist: false });
 }
 
 function initBlockDrag() {
@@ -1079,11 +1451,10 @@ function initBlockDrag() {
       return;
     }
     const block = handle.closest(".md-block-draggable");
-    const container = block?.parentElement;
-    if (!block || !container) {
+    if (!block || !block.parentElement) {
       return;
     }
-    blockDragState = { block, container };
+    blockDragState = { block, container: block.parentElement, targetContainer: block.parentElement };
     block.classList.add("md-block-dragging");
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/plain", "md-block");
@@ -1102,12 +1473,13 @@ function initBlockDrag() {
     if (event.target.closest(".md-drag-handle")) {
       return;
     }
-    const container = blockDragState.container;
-    if (!container || !container.contains(event.target)) {
+    const container = findBlockDropContainer(event.clientX, event.clientY, blockDragState.block);
+    if (!container) {
       return;
     }
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
+    blockDragState.targetContainer = container;
     showBlockDropIndicator(container, getBlockDropTarget(container, event.clientY, blockDragState.block));
   });
 
@@ -1116,7 +1488,14 @@ function initBlockDrag() {
       return;
     }
     event.preventDefault();
-    const { block, container } = blockDragState;
+    const { block } = blockDragState;
+    const container =
+      blockDragState.targetContainer ||
+      findBlockDropContainer(event.clientX, event.clientY, block) ||
+      blockDragState.container;
+    if (!container) {
+      return;
+    }
     const beforeNode = getBlockDropTarget(container, event.clientY, block);
     if (beforeNode) {
       container.insertBefore(block, beforeNode);
@@ -1244,6 +1623,8 @@ function renderReport(payload) {
   reportContent.innerHTML = "";
   activeCitation = null;
   citeRefSerial = 0;
+  citeSourcePreviewIndex.clear();
+  hideCiteHoverPopover();
   internalLinkSerial = 0;
   clearActiveInternalJump();
 
@@ -1263,6 +1644,10 @@ function renderReport(payload) {
   toc.appendChild(tocInner);
   updateActiveToc();
   void hydrateMermaid(reportContent);
+  applyBlockDragSetting();
+  if (window.MeowWysiwyg?.refresh) {
+    window.MeowWysiwyg.refresh();
+  }
   window.requestAnimationFrame(() => {
     setScrollTop(previousScrollTop, "auto");
   });
@@ -1735,7 +2120,7 @@ function handleTableCellTaskToggle(lineIndex, cellIndex, checked, checkbox, wrap
   latestDocumentText = nextText;
   wrapper.classList.toggle("table-task-cell--checked", checked);
   checkbox.setAttribute("aria-label", checked ? "标记为未完成" : "标记为已完成");
-  vscode.postMessage({ type: "saveContent", content: nextText });
+  vscode.postMessage({ type: "saveContent", content: nextText, persist: false });
 }
 
 function appendTableCellContent(parent, cellText, context, lineIndex, cellIndex) {
@@ -1808,7 +2193,7 @@ function handleTaskCheckboxToggle(lineIndex, checked, item, checkbox) {
   latestDocumentText = nextText;
   item.classList.toggle("task-line--checked", checked);
   checkbox.setAttribute("aria-label", checked ? "标记为未完成" : "标记为已完成");
-  vscode.postMessage({ type: "saveContent", content: nextText });
+  vscode.postMessage({ type: "saveContent", content: nextText, persist: false });
 }
 
 function renderFootnoteRef(id, context) {
@@ -2088,7 +2473,9 @@ function renderMarkdown(content, file) {
       return;
     }
     const table = renderTable(tableRows, context);
-    tagMdBlock(table, tableRows[0].lineIndex, tableRows[tableRows.length - 1].lineIndex);
+    tagMdBlock(table, tableRows[0].lineIndex, tableRows[tableRows.length - 1].lineIndex, {
+      draggable: true
+    });
     fragment.appendChild(table);
     tableRows = [];
   }
@@ -2123,7 +2510,7 @@ function renderMarkdown(content, file) {
       pre.appendChild(code);
       blockElement = pre;
     }
-    tagMdBlock(blockElement, codeStartLine, endLine);
+    tagMdBlock(blockElement, codeStartLine, endLine, { draggable: true });
     fragment.appendChild(blockElement);
     codeLines = [];
     codeStartLine = -1;
@@ -2208,7 +2595,7 @@ function renderMarkdown(content, file) {
       flushTable();
       const blockquote = parseBlockquote(lines, lineIndex);
       const quote = renderBlockquote(blockquote.parts, context);
-      tagMdBlock(quote, lineIndex, blockquote.nextIndex - 1);
+      tagMdBlock(quote, lineIndex, blockquote.nextIndex - 1, { draggable: true });
       fragment.appendChild(quote);
       lineIndex = blockquote.nextIndex - 1;
       continue;
@@ -2219,7 +2606,7 @@ function renderMarkdown(content, file) {
       const htmlBlock = document.createElement("div");
       htmlBlock.className = "md-html-block";
       appendSafeHtmlBlock(htmlBlock, line.trim());
-      tagMdBlock(htmlBlock, lineIndex, lineIndex);
+      tagMdBlock(htmlBlock, lineIndex, lineIndex, { draggable: true });
       fragment.appendChild(htmlBlock);
       continue;
     }
@@ -2240,7 +2627,7 @@ function renderMarkdown(content, file) {
       flushParagraph();
       flushTable();
       const taskItem = renderTaskListItem(task[1].toLowerCase() === "x", task[2].trim(), context, lineIndex);
-      tagMdBlock(taskItem, lineIndex, lineIndex);
+      tagMdBlock(taskItem, lineIndex, lineIndex, { draggable: true });
       fragment.appendChild(taskItem);
       continue;
     }
@@ -2258,7 +2645,7 @@ function renderMarkdown(content, file) {
       body.className = "list-body";
       appendInlineMarkdown(body, ordered ? ordered[2].trim() : unordered[1].trim(), context);
       item.append(marker, body);
-      tagMdBlock(item, lineIndex, lineIndex);
+      tagMdBlock(item, lineIndex, lineIndex, { draggable: true });
       fragment.appendChild(item);
       continue;
     }
@@ -2622,6 +3009,11 @@ function parseSourceLine(line) {
 }
 
 function renderSourceLine(sourceLine, context) {
+  citeSourcePreviewIndex.set(
+    makeSourceId(context.fileKey, sourceLine.number),
+    parseSourcePreview(sourceLine.body)
+  );
+
   const item = document.createElement("div");
   item.className = "list-line ordered-line source-line";
   item.id = makeSourceId(context.fileKey, sourceLine.number);
@@ -3053,6 +3445,7 @@ function handleReportClick(evt) {
 }
 
 function activateCitation(cite) {
+  hideCiteHoverPopover();
   const source = document.getElementById(cite.dataset.sourceTarget);
   if (!source) return;
   clearCitationFlash();

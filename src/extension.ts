@@ -6,8 +6,10 @@ type ViewerMessage =
   | { type: "ready" }
   | { type: "openExternal"; href?: string }
   | { type: "openFile"; href?: string }
-  | { type: "saveContent"; content?: string }
-  | { type: "setAutoOpenReaderMode"; enabled?: boolean };
+  | { type: "saveContent"; content?: string; persist?: boolean }
+  | { type: "setAutoOpenReaderMode"; enabled?: boolean }
+  | { type: "editorState"; dirty?: boolean; inEditorMode?: boolean; inWysiwygMode?: boolean }
+  | { type: "requestReload" };
 
 const READER_VIEW_TYPE = "meowReportMarkdown.viewer";
 const textModeUris = new Set<string>();
@@ -560,6 +562,27 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     let ready = false;
     let updateTimer: ReturnType<typeof setTimeout> | undefined;
     let pendingUpdate = false;
+    let webviewEditorDirty = false;
+    let webviewInEditorMode = false;
+    let webviewInWysiwygMode = false;
+    let suppressDocumentUpdateUntil = 0;
+
+    const shouldSuppressDocumentUpdate = (): boolean => Date.now() < suppressDocumentUpdateUntil;
+
+    const suppressDocumentUpdates = (durationMs = 400): void => {
+      suppressDocumentUpdateUntil = Date.now() + durationMs;
+    };
+
+    const postToWebview = async (message: unknown): Promise<void> => {
+      if (disposed) {
+        return;
+      }
+      try {
+        await webviewPanel.webview.postMessage(message);
+      } catch {
+        // Webview may already be disposed.
+      }
+    };
 
     const update = async (): Promise<void> => {
       if (disposed) {
@@ -572,17 +595,26 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 
       pendingUpdate = false;
       try {
-        const payload = await buildReportPayload(document.uri, document.getText());
+        const content = document.getText();
+        const payload = await buildReportPayload(document.uri, content);
         if (disposed) {
           return;
         }
-        await webviewPanel.webview.postMessage({ type: "render", payload });
+        if (webviewEditorDirty && webviewInEditorMode) {
+          await postToWebview({
+            type: "documentChanged",
+            content,
+            payload
+          });
+          return;
+        }
+        await postToWebview({ type: "render", payload });
       } catch (error) {
         if (disposed) {
           return;
         }
         const message = error instanceof Error ? error.message : String(error);
-        await webviewPanel.webview.postMessage({
+        await postToWebview({
           type: "render",
           payload: {
             ok: true,
@@ -614,6 +646,9 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       }
 
       if (message.type === "ready") {
+        if (ready) {
+          return;
+        }
         ready = true;
         await postReaderSettings(webviewPanel.webview);
         await update();
@@ -641,20 +676,57 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       }
 
       if (message.type === "saveContent" && typeof message.content === "string") {
-        await this.saveDocumentContent(document, message.content);
+        suppressDocumentUpdates(600);
+        await this.applyDocumentContent(document, message.content, {
+          saveToDisk: message.persist === true
+        });
+        webviewEditorDirty = false;
+        return;
+      }
+
+      if (message.type === "editorState") {
+        webviewEditorDirty = Boolean(message.dirty);
+        webviewInEditorMode = Boolean(message.inEditorMode);
+        webviewInWysiwygMode = Boolean(message.inWysiwygMode);
+        return;
+      }
+
+      if (message.type === "requestReload") {
+        try {
+          const content = document.getText();
+          const payload = await buildReportPayload(document.uri, content);
+          if (disposed) {
+            return;
+          }
+          await postToWebview({
+            type: "reloadDocument",
+            content,
+            payload
+          });
+        } catch {
+          // Ignore reload failures.
+        }
       }
     });
 
     const changeSub = vscode.workspace.onDidChangeTextDocument((event) => {
-      if (event.document.uri.toString() === document.uri.toString()) {
-        scheduleUpdate();
+      if (event.document.uri.toString() !== document.uri.toString()) {
+        return;
       }
+      if (shouldSuppressDocumentUpdate()) {
+        return;
+      }
+      scheduleUpdate();
     });
 
     const saveSub = vscode.workspace.onDidSaveTextDocument((saved) => {
-      if (saved.uri.toString() === document.uri.toString()) {
-        scheduleUpdate();
+      if (saved.uri.toString() !== document.uri.toString()) {
+        return;
       }
+      if (shouldSuppressDocumentUpdate()) {
+        return;
+      }
+      scheduleUpdate();
     });
 
     webviewPanel.onDidDispose(() => {
@@ -669,6 +741,14 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 
     // Register listeners before loading HTML so the initial "ready" message is not lost.
     webviewPanel.webview.html = this.getHtml(webviewPanel.webview);
+
+    // Fallback: if webview "ready" is missed, still push the first render.
+    setTimeout(() => {
+      if (!disposed && !ready) {
+        ready = true;
+        void update();
+      }
+    }, 250);
   }
 
   private async openExternal(href: string): Promise<void> {
@@ -683,10 +763,19 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     }
   }
 
-  private async saveDocumentContent(document: vscode.TextDocument, nextContent: string): Promise<void> {
+  private async applyDocumentContent(
+    document: vscode.TextDocument,
+    nextContent: string,
+    options: { saveToDisk?: boolean } = {}
+  ): Promise<void> {
+    const current = document.getText();
+    if (current === nextContent) {
+      return;
+    }
+
     const fullRange = new vscode.Range(
       document.positionAt(0),
-      document.positionAt(document.getText().length)
+      document.positionAt(current.length)
     );
     const edit = new vscode.WorkspaceEdit();
     edit.replace(document.uri, fullRange, nextContent);
@@ -695,7 +784,14 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       vscode.window.showErrorMessage("保存失败：无法写入文档变更。");
       return;
     }
-    await document.save();
+
+    if (options.saveToDisk) {
+      try {
+        await document.save();
+      } catch {
+        // Document may have been closed while saving.
+      }
+    }
   }
 
   private async openFileFromHref(baseDocumentUri: vscode.Uri, href: string): Promise<void> {
@@ -763,6 +859,9 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       .with({ query: `v=${cacheKey}` });
     const mermaidUri = webview
       .asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "mermaid.min.js"))
+      .with({ query: `v=${cacheKey}` });
+    const wysiwygUri = webview
+      .asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "wysiwygEditor.js"))
       .with({ query: `v=${cacheKey}` });
     const nonce = cacheKey;
 
@@ -841,6 +940,15 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         </label>
       </section>
       <section class="reader-settings-group">
+        <h2 class="reader-settings-label">编辑</h2>
+        <label class="reader-settings-switch" for="enableWysiwygMode">
+          <span>所见即所得编辑</span>
+          <input id="enableWysiwygMode" type="checkbox" />
+          <span class="reader-settings-switch-ui" aria-hidden="true"></span>
+        </label>
+        <button id="reloadDocumentBtn" type="button" class="reader-settings-action">重新加载文档</button>
+      </section>
+      <section class="reader-settings-group">
         <h2 class="reader-settings-label">交互</h2>
         <label class="reader-settings-switch" for="enableBlockDrag">
           <span>正文块拖动排序</span>
@@ -852,6 +960,7 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
   </div>
   <script nonce="${nonce}" src="${mermaidUri}"></script>
   <script nonce="${nonce}" src="${jsUri}"></script>
+  <script nonce="${nonce}" src="${wysiwygUri}"></script>
 </body>
 </html>`;
   }

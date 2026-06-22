@@ -263,7 +263,27 @@
 
 ---
 
-## 7. 本文档对应的首轮执行建议
+## 7. 新一轮 P0（2026-06）— 已完成
+
+| Feature | 内容 | 状态 |
+|---------|------|------|
+| S1 | cite hover 弹窗 | 已完成 |
+| S2 | 外部改动同步 + 手动重载 | 已完成 |
+| S3 | 跨标题拖动 | 已完成 |
+| S4 | 全类型块拖动 | 已完成 |
+| S5 | WYSIWYG 阶段 1（标题/段落/列表） | 已完成 |
+| S6 | WYSIWYG 阶段 2（表格/引用/代码块） | 已完成 |
+| S7 | 标题修改实时更新 TOC | 已完成 |
+
+验收 fixture：
+
+- `docs/fixtures/cite-demo.md` — cite hover + 跳转
+- `docs/fixtures/drag-cross-heading-demo.md` — 跨标题拖动
+- `docs/fixtures/wysiwyg-basic-demo.md` — WYSIWYG 基础
+
+---
+
+## 8. 本文档对应的首轮执行建议
 
 首轮先实现 `F4 一级标题来源修正`。  
 这是后续目录、内链、折叠、拖动等功能正确性的基础，改动小、可快速验收、回滚成本低。
