@@ -30,7 +30,7 @@
 
 - 外链走系统浏览器。
 
-- 相对 `.md` 链接在编辑器中打开对应文档。
+- 相对 `.md` 链接在阅读器中打开对应文档（支持 `../` 跨目录）。
 
 - 文档内锚点可跳转。
 
@@ -38,9 +38,18 @@
 
 - 外部链接示例：[OpenAI](https://openai.com)
 
-- 相对 Markdown 文件链接：[打开 cite-demo](./cite-demo.md)
+- 同目录 Markdown 链接：[打开 cite-demo](./cite-demo.md)
+- Obsidian 双链（同目录）：[[cite-demo]]、[[extended-markdown-demo|扩展语法 demo]]
+- 同目录相对链接：[打开扩展语法 demo](./extended-markdown-demo.md)
 
-- 另一个相对链接：[打开扩展语法 demo](./extended-markdown-demo.md)
+### 2.1.1 跨目录跳转（上级文件夹）
+
+本文件位于 `docs/fixtures/`，以下链接用于验证跳转到其他目录的 Markdown 文件（应在阅读器中打开）：
+
+- 上一级 `docs/`：[打开 markdown_reader_plan](../markdown_reader_plan.md)
+- 项目根目录：[打开 README](../../README.md)
+- Obsidian 双链（跨目录）：[[../markdown_reader_plan|开发计划文档]]、[[../../README|项目 README]]
+- 相对路径 + 双链混用：[格式规范](../markdown_format_spec.md)、[[../develop/project-architecture|架构说明]]
 
 ## 1. 目录与标题结构（F4/F3 回归）
 

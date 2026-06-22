@@ -11,6 +11,7 @@ type ViewerMessage =
 const READER_VIEW_TYPE = "meowReportMarkdown.viewer";
 const textModeUris = new Set<string>();
 const readerIntentUris = new Set<string>();
+const openInReaderModeInflight = new Map<string, Promise<void>>();
 const extensionActivatedAt = Date.now();
 const STARTUP_GRACE_MS = 1200;
 
@@ -93,43 +94,105 @@ function findReaderTab(uri: vscode.Uri): vscode.Tab | undefined {
   return undefined;
 }
 
-async function ensureTextDocumentReady(uri: vscode.Uri): Promise<vscode.TextDocument> {
-  const document = await vscode.workspace.openTextDocument(uri);
-  const openedAsText = vscode.window.tabGroups.all.some((group) =>
-    group.tabs.some(
-      (tab) => tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === uri.toString()
-    )
-  );
-
-  if (!openedAsText) {
-    await vscode.window.showTextDocument(document, { preview: false, preserveFocus: true });
-    await new Promise((resolve) => setTimeout(resolve, 150));
-  }
-
-  return document;
+function resolveOpenColumn(): vscode.ViewColumn {
+  return vscode.window.activeTextEditor?.viewColumn ?? vscode.ViewColumn.Active;
 }
 
-async function openInReaderMode(uri: vscode.Uri): Promise<void> {
-  // Cursor requires the backing TextDocument to exist in the text editor model
-  // service before CustomTextEditor can open ("Assertion Failed: Argument is
-  // `undefined` or `null`").
-  await ensureTextDocumentReady(uri);
+function isCursorAssertionError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Assertion Failed|undefined|null/i.test(message);
+}
+
+function findTextTabsForUri(uri: vscode.Uri): vscode.Tab[] {
+  const uriStr = uri.toString();
+  const tabs: vscode.Tab[] = [];
+  for (const group of vscode.window.tabGroups.all) {
+    for (const tab of group.tabs) {
+      if (tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === uriStr) {
+        tabs.push(tab);
+      }
+    }
+  }
+  return tabs;
+}
+
+async function closeDuplicateTextTab(uri: vscode.Uri): Promise<void> {
+  if (!hasReaderModeTab(uri)) {
+    return;
+  }
+
+  for (const tab of findTextTabsForUri(uri)) {
+    try {
+      await vscode.window.tabGroups.close(tab);
+    } catch {
+      // Ignore close failures.
+    }
+  }
+}
+
+async function openWithReader(uri: vscode.Uri, column: vscode.ViewColumn): Promise<void> {
+  await vscode.commands.executeCommand("vscode.openWith", uri, READER_VIEW_TYPE, [
+    column,
+    { pinned: true }
+  ]);
+}
+
+async function openInReaderModeInternal(uri: vscode.Uri): Promise<void> {
+  if (hasReaderModeTab(uri)) {
+    await openWithReader(uri, resolveOpenColumn());
+    await closeDuplicateTextTab(uri);
+    return;
+  }
+
+  // Cursor requires the backing TextDocument to exist before CustomTextEditor
+  // can open ("Assertion Failed: Argument is `undefined` or `null`").
+  await vscode.workspace.openTextDocument(uri);
+  const column = resolveOpenColumn();
 
   const delays = [0, 200, 500, 900];
   let lastError: unknown;
-  for (const delayMs of delays) {
+  let usedTextTabFallback = false;
+
+  for (let attempt = 0; attempt < delays.length; attempt++) {
+    const delayMs = delays[attempt];
     if (delayMs > 0) {
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      await sleep(delayMs);
     }
+
     try {
-      await vscode.commands.executeCommand("vscode.openWith", uri, READER_VIEW_TYPE);
+      await openWithReader(uri, column);
+      await closeDuplicateTextTab(uri);
       return;
     } catch (error) {
       lastError = error;
+      if (!usedTextTabFallback && isCursorAssertionError(error) && attempt < delays.length - 1) {
+        usedTextTabFallback = true;
+        const document = await vscode.workspace.openTextDocument(uri);
+        await vscode.window.showTextDocument(document, {
+          preview: false,
+          preserveFocus: true,
+          viewColumn: column
+        });
+        await sleep(150);
+      }
     }
   }
 
   throw lastError;
+}
+
+async function openInReaderMode(uri: vscode.Uri): Promise<void> {
+  const key = uri.toString();
+  const inflight = openInReaderModeInflight.get(key);
+  if (inflight) {
+    return inflight;
+  }
+
+  const promise = openInReaderModeInternal(uri).finally(() => {
+    openInReaderModeInflight.delete(key);
+  });
+  openInReaderModeInflight.set(key, promise);
+  return promise;
 }
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -163,7 +226,7 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 function isAutoOpenEnabled(): boolean {
-  return vscode.workspace.getConfiguration("meowReportMarkdown").get<boolean>("autoOpenReaderMode", true);
+  return vscode.workspace.getConfiguration("meowReportMarkdown").get<boolean>("autoOpenReaderMode", false);
 }
 
 function hasReaderModeTab(uri: vscode.Uri): boolean {
@@ -626,7 +689,9 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       return;
     }
 
-    await vscode.commands.executeCommand("vscode.open", target);
+    textModeUris.delete(target.toString());
+    markReaderIntent(target);
+    await openInReaderMode(target);
   }
 
   private resolveMarkdownHref(baseDocumentUri: vscode.Uri, href: string): vscode.Uri | null {
@@ -647,13 +712,19 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       // Continue with relative path logic.
     }
 
-    const cleanPath = trimmed.split(/[?#]/)[0];
-    if (!cleanPath || !cleanPath.toLowerCase().endsWith(".md")) {
+    const pathPart = trimmed.split(/[?#]/)[0].trim();
+    if (!pathPart) {
       return null;
     }
 
-    const baseDir = vscode.Uri.file(path.dirname(baseDocumentUri.fsPath));
-    return vscode.Uri.joinPath(baseDir, cleanPath);
+    let cleanPath = pathPart;
+    if (!cleanPath.toLowerCase().endsWith(".md")) {
+      cleanPath = `${cleanPath}.md`;
+    }
+
+    const baseDir = path.dirname(baseDocumentUri.fsPath);
+    const resolvedPath = path.normalize(path.join(baseDir, cleanPath));
+    return vscode.Uri.file(resolvedPath);
   }
 
   private isSubPath(parentPath: string, candidatePath: string): boolean {

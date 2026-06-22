@@ -38,13 +38,15 @@
       "explorer/context": [
         {
           "command": "meowReportMarkdown.openPreview",
-          "when": "resourceExtname == .md"
+          "when": "resourceExtname == .md",
+          "group": "navigation@2"
         }
       ],
       "editor/title/context": [
         {
           "command": "meowReportMarkdown.openPreview",
-          "when": "resourceExtname == .md"
+          "when": "resourceExtname == .md",
+          "group": "navigation@2"
         }
       ]
     },
@@ -53,7 +55,7 @@
       "properties": {
         "meowReportMarkdown.autoOpenReaderMode": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "description": "Automatically open .md files with Meow Report Markdown Viewer."
         }
       }

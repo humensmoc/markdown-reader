@@ -127,14 +127,14 @@ Not yet on the extension marketplace? Install from source — see [Development &
 
 ### Usage
 
-After installation, opening a `.md` file automatically switches to **Meow Report Markdown Viewer** (disable via `meowReportMarkdown.autoOpenReaderMode`, default `true`).
+By default, `.md` files open in the built-in text editor. To use **Meow Report Markdown Viewer**, pick one of:
 
-Other ways to open:
-
-- Explorer: right-click a `.md` file → **Open with Meow Report Markdown Viewer**
+- Explorer: right-click a `.md` file → **Open with Meow Report Markdown Viewer** (recommended)
 - Editor title bar: right-click → same command
 - Command Palette → **Open with Meow Report Markdown Viewer**
 - **Reopen Editor With...** → **Meow Report Markdown Viewer**
+
+To auto-switch every `.md` file to the reader on open, set `meowReportMarkdown.autoOpenReaderMode` to `true` in settings.
 
 #### Behavior
 
@@ -148,11 +148,15 @@ Other ways to open:
 
 See the reload instructions in the [dev guide](docs/how-to-release&update-local&extension-market.md#23-改代码后如何刷新) (Chinese).
 
-#### `.md` still opens in the default text editor?
+#### Want every `.md` to open in the reader automatically?
 
-- Ensure `meowReportMarkdown.autoOpenReaderMode` is `true`
+- Set `meowReportMarkdown.autoOpenReaderMode` to `true` in settings
 - Confirm the extension is loaded in the current window
-- Use **Reopen Editor With...** and pick the reader view manually
+
+#### Reader did not open from the context menu?
+
+- Use **Reopen Editor With...** and pick **Meow Report Markdown Viewer**
+- Reload the window after installing or updating the extension
 
 #### `Assertion Failed: Argument is undefined or null` when opening `.md`?
 

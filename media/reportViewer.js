@@ -1145,6 +1145,30 @@ function getAnchorTarget(anchorId) {
   return normalizeAnchorTarget(rawTarget);
 }
 
+function resolveHeadingAnchorId(headingText) {
+  const normalized = String(headingText || "").trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  const tocLinks = Array.from(toc?.querySelectorAll("a[data-anchor]") || []);
+  for (const link of tocLinks) {
+    const label = link.textContent?.replace(/^\s*[\d.]+\s*/, "").trim().toLowerCase();
+    if (label === normalized) {
+      return link.dataset.anchor || null;
+    }
+  }
+
+  const headings = Array.from(reportContent?.querySelectorAll("h1,h2,h3,h4,h5,h6") || []);
+  for (const heading of headings) {
+    if (heading.textContent?.trim().toLowerCase() === normalized) {
+      return heading.id || null;
+    }
+  }
+
+  return null;
+}
+
 function normalizeAnchorTarget(target) {
   if (!target) {
     return null;
@@ -2637,6 +2661,25 @@ function renderInlineMarkdown(text, context = {}) {
     }
     appendInlineText(fragment, value.slice(cursor, linkStart));
 
+    const wikilink = parseWikilink(value, linkStart);
+    if (wikilink) {
+      const href = wikilinkTargetToHref(wikilink.target);
+      if (href) {
+        const link = document.createElement("a");
+        link.href = href;
+        link.title = wikilink.target;
+        if (href.startsWith("#")) {
+          decorateInternalAnchorLink(link);
+        }
+        appendInlineText(link, wikilink.display);
+        fragment.appendChild(link);
+      } else {
+        appendInlineText(fragment, value.slice(linkStart, wikilink.end));
+      }
+      cursor = wikilink.end;
+      continue;
+    }
+
     const cite = /^\[cite:\s*([0-9,\s-]+)\]/i.exec(value.slice(linkStart));
     if (cite && !context.disableCitations) {
       fragment.appendChild(renderCitationGroup(cite[1], context));
@@ -2702,6 +2745,67 @@ function findNextInlineLinkStart(value, start) {
   }
 
   return -1;
+}
+
+function parseWikilink(value, start) {
+  if (value[start] !== "[" || value[start + 1] !== "[") {
+    return null;
+  }
+
+  const close = value.indexOf("]]", start + 2);
+  if (close === -1) {
+    return null;
+  }
+
+  const inner = value.slice(start + 2, close).trim();
+  if (!inner) {
+    return null;
+  }
+
+  const pipeIndex = inner.indexOf("|");
+  let target;
+  let display;
+  if (pipeIndex !== -1) {
+    target = inner.slice(0, pipeIndex).trim();
+    display = inner.slice(pipeIndex + 1).trim() || target;
+  } else {
+    target = inner;
+    if (target.startsWith("#")) {
+      display = target.slice(1).replace(/^\^/, "");
+    } else if (target.includes("#")) {
+      const anchorPart = target.slice(target.indexOf("#") + 1);
+      display = anchorPart.replace(/^\^/, "") || target.split("/").pop();
+    } else {
+      display = target.split("/").pop() || target;
+    }
+  }
+
+  return { target, display, end: close + 2 };
+}
+
+function wikilinkTargetToHref(target) {
+  const trimmed = String(target || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  if (trimmed.startsWith("#")) {
+    return trimmed;
+  }
+
+  const hashIndex = trimmed.indexOf("#");
+  const pathPart = hashIndex >= 0 ? trimmed.slice(0, hashIndex).trim() : trimmed;
+  const fragment = hashIndex >= 0 ? trimmed.slice(hashIndex) : "";
+  if (!pathPart) {
+    return fragment || "";
+  }
+
+  let path = pathPart;
+  if (!/\.md$/i.test(path)) {
+    path = `${path}.md`;
+  }
+
+  return `${path}${fragment}`;
 }
 
 function appendInlineText(parent, text) {
@@ -2862,7 +2966,11 @@ function handleReportClick(evt) {
 
   if (anchorId || href.startsWith("#")) {
     evt.preventDefault();
-    const targetAnchor = anchorId || href.slice(1);
+    let targetAnchor = anchorId || href.slice(1);
+    const resolvedAnchor = resolveHeadingAnchorId(decodeURIComponent(targetAnchor));
+    if (resolvedAnchor) {
+      targetAnchor = resolvedAnchor;
+    }
     if (link.closest("#toc")) {
       scrollToAnchor(targetAnchor);
       return;
@@ -3015,7 +3123,15 @@ function isSafeHref(href) {
     return false;
   }
 
-  return /\.md(?:[#?].*)?$/i.test(value);
+  if (/\.md(?:[#?].*)?$/i.test(value)) {
+    return true;
+  }
+
+  // Obsidian wikilink targets may omit the .md extension.
+  return (
+    /^[^#?]+\.(?:md)?(?:[#?].*)?$/i.test(value) ||
+    /^[^#?]+(?:[#?].*)?$/.test(value)
+  );
 }
 
 function renderError(message) {
