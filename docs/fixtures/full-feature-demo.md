@@ -196,6 +196,13 @@ function checkRenderState(ok: boolean): string {
 }
 ```
 
+带 shell 注释的代码块（`#` 不应被解析为标题）：
+
+```bash
+git clone https://github.com/hi-godot/godot-ai.git
+# 将 plugin/addons/godot_ai 复制到你的项目 addons/ 目录
+```
+
 ### 5.5 HTML 安全过滤回归
 
 行内标签：<mark>高亮</mark>、<kbd>Ctrl</kbd>+<kbd>S</kbd>、x<sup>2</sup>。  

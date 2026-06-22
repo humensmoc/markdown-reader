@@ -24,7 +24,10 @@
 
 ### 使用
 
-安装插件后，`.md` 文件会在打开后自动切换到 **Meow Report Markdown Viewer**（可通过设置 `meowReportMarkdown.autoOpenReaderMode` 关闭，默认 `true`）。
+默认情况下，`.md` 文件以 VS Code/Cursor 内置文本编辑器打开。如需左键打开时自动进入阅读器，可：
+
+- 阅读视图右下角 **设置** → 开启 **左键打开 .md 时使用阅读器**
+- 或在 VS Code 设置中将 `meowReportMarkdown.autoOpenReaderMode` 设为 `true`
 
 其他打开方式：
 
@@ -45,11 +48,13 @@
 
 见 [开发文档](docs/how-to-release&update-local&extension-market.md#23-改代码后如何刷新) 中的刷新说明。
 
-#### 为什么点击 `.md` 还是默认文本编辑器？
+#### 想让左键打开 `.md` 时自动进入阅读器？
 
-- 确认 `meowReportMarkdown.autoOpenReaderMode` 为 `true`
+- 阅读视图右下角 **设置** → 开启 **左键打开 .md 时使用阅读器**
+- 或在设置中将 `meowReportMarkdown.autoOpenReaderMode` 设为 `true`
 - 确认当前窗口已加载本扩展
-- 使用 **Reopen Editor With...** 手动选择阅读视图
+
+#### 右键打开后没有进入阅读器？
 
 #### 打开 `.md` 时报 `Assertion Failed: Argument is undefined or null`？
 
@@ -134,7 +139,10 @@ By default, `.md` files open in the built-in text editor. To use **Meow Report M
 - Command Palette → **Open with Meow Report Markdown Viewer**
 - **Reopen Editor With...** → **Meow Report Markdown Viewer**
 
-To auto-switch every `.md` file to the reader on open, set `meowReportMarkdown.autoOpenReaderMode` to `true` in settings.
+To auto-switch every `.md` file to the reader on left-click:
+
+- Reader view → bottom-right **Settings** → enable **Open .md with reader on click**
+- Or set `meowReportMarkdown.autoOpenReaderMode` to `true` in VS Code settings
 
 #### Behavior
 
@@ -150,7 +158,8 @@ See the reload instructions in the [dev guide](docs/how-to-release&update-local&
 
 #### Want every `.md` to open in the reader automatically?
 
-- Set `meowReportMarkdown.autoOpenReaderMode` to `true` in settings
+- Reader view → bottom-right **Settings** → enable **Open .md with reader on click**
+- Or set `meowReportMarkdown.autoOpenReaderMode` to `true` in settings
 - Confirm the extension is loaded in the current window
 
 #### Reader did not open from the context menu?

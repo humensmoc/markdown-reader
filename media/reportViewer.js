@@ -19,6 +19,7 @@ const showContentNumbersInput = document.getElementById("showContentNumbers");
 const headingFontScaleInput = document.getElementById("headingFontScale");
 const rainbowHeadingColorsInput = document.getElementById("rainbowHeadingColors");
 const enableBlockDragInput = document.getElementById("enableBlockDrag");
+const autoOpenReaderModeInput = document.getElementById("autoOpenReaderMode");
 let activeCitation = null;
 let citeRefSerial = 0;
 let citeFlashEndTimer = null;
@@ -57,7 +58,8 @@ const readerSettings = {
   showContentNumbers: true,
   headingFontScale: true,
   rainbowHeadingColors: false,
-  enableBlockDrag: false
+  enableBlockDrag: false,
+  autoOpenReaderMode: false
 };
 
 initTocDock();
@@ -70,6 +72,10 @@ initBlockDrag();
 
 window.addEventListener("message", (event) => {
   const message = event.data;
+  if (message?.type === "settings") {
+    applyExtensionSettings(message);
+    return;
+  }
   if (message?.type === "render") {
     latestDocumentText = message?.payload?.files?.[0]?.content || "";
     if (document.body.classList.contains("editor-mode") && reportEditor && !editorDirty) {
@@ -186,6 +192,21 @@ function initReaderSettings() {
     applyReaderSettings();
     applyBlockDragSetting();
   });
+  autoOpenReaderModeInput?.addEventListener("change", () => {
+    readerSettings.autoOpenReaderMode = Boolean(autoOpenReaderModeInput.checked);
+    updateReaderSettingsUi();
+    vscode?.postMessage({
+      type: "setAutoOpenReaderMode",
+      enabled: readerSettings.autoOpenReaderMode
+    });
+  });
+}
+
+function applyExtensionSettings(settings) {
+  if (typeof settings.autoOpenReaderMode === "boolean") {
+    readerSettings.autoOpenReaderMode = settings.autoOpenReaderMode;
+    updateReaderSettingsUi();
+  }
 }
 
 function isReaderSettingsOpen() {
@@ -360,6 +381,9 @@ function updateReaderSettingsUi() {
   }
   if (enableBlockDragInput) {
     enableBlockDragInput.checked = readerSettings.enableBlockDrag;
+  }
+  if (autoOpenReaderModeInput) {
+    autoOpenReaderModeInput.checked = readerSettings.autoOpenReaderMode;
   }
   fontDecrease?.toggleAttribute("disabled", readerSettings.fontScale <= FONT_SCALE_MIN);
   fontIncrease?.toggleAttribute("disabled", readerSettings.fontScale >= FONT_SCALE_MAX);
@@ -2003,6 +2027,28 @@ function tryParseInlineHtml(value, start) {
   };
 }
 
+function parseCodeFenceLine(line) {
+  const match = /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(String(line || ""));
+  if (!match) {
+    return null;
+  }
+  const marker = match[2];
+  return {
+    indent: match[1].length,
+    char: marker[0],
+    length: marker.length,
+    remainder: match[3] || ""
+  };
+}
+
+function isCodeFenceClose(line, openFence) {
+  const fence = parseCodeFenceLine(line);
+  if (!fence || !openFence || fence.char !== openFence.char || fence.length < openFence.length) {
+    return false;
+  }
+  return /^\s*$/.test(fence.remainder);
+}
+
 function renderMarkdown(content, file) {
   const fragment = document.createDocumentFragment();
   const preprocessed = preprocessMarkdownContent(content);
@@ -2017,6 +2063,7 @@ function renderMarkdown(content, file) {
   let paragraphStartLine = -1;
   let paragraphEndLine = -1;
   let inCode = false;
+  let openCodeFence = null;
   let codeLang = "";
   let codeLines = [];
   let codeStartLine = -1;
@@ -2084,18 +2131,28 @@ function renderMarkdown(content, file) {
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
     const line = lines[lineIndex];
-    if (/^```/.test(line)) {
+    const fence = parseCodeFenceLine(line);
+    if (fence) {
+      if (inCode) {
+        if (isCodeFenceClose(line, openCodeFence)) {
+          flushParagraph();
+          flushTable();
+          flushCode(lineIndex);
+          codeLang = "";
+          inCode = false;
+          openCodeFence = null;
+        } else {
+          codeLines.push(line);
+        }
+        continue;
+      }
       flushParagraph();
       flushTable();
-      if (inCode) {
-        flushCode(lineIndex);
-        codeLang = "";
-      } else {
-        const open = /^```([^\s`]*)/.exec(line.trim());
-        codeLang = open && open[1] ? open[1].toLowerCase() : "";
-        codeStartLine = lineIndex;
-      }
-      inCode = !inCode;
+      const info = fence.remainder.trim();
+      codeLang = info ? info.split(/\s+/)[0].toLowerCase() : "";
+      codeStartLine = lineIndex;
+      inCode = true;
+      openCodeFence = { char: fence.char, length: fence.length };
       continue;
     }
     if (inCode) {

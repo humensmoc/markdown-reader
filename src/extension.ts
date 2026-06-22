@@ -6,7 +6,8 @@ type ViewerMessage =
   | { type: "ready" }
   | { type: "openExternal"; href?: string }
   | { type: "openFile"; href?: string }
-  | { type: "saveContent"; content?: string };
+  | { type: "saveContent"; content?: string }
+  | { type: "setAutoOpenReaderMode"; enabled?: boolean };
 
 const READER_VIEW_TYPE = "meowReportMarkdown.viewer";
 const textModeUris = new Set<string>();
@@ -227,6 +228,19 @@ export function activate(context: vscode.ExtensionContext): void {
 
 function isAutoOpenEnabled(): boolean {
   return vscode.workspace.getConfiguration("meowReportMarkdown").get<boolean>("autoOpenReaderMode", false);
+}
+
+async function setAutoOpenReaderMode(enabled: boolean): Promise<void> {
+  await vscode.workspace
+    .getConfiguration("meowReportMarkdown")
+    .update("autoOpenReaderMode", enabled, vscode.ConfigurationTarget.Global);
+}
+
+async function postReaderSettings(webview: vscode.Webview): Promise<void> {
+  await webview.postMessage({
+    type: "settings",
+    autoOpenReaderMode: isAutoOpenEnabled()
+  });
 }
 
 function hasReaderModeTab(uri: vscode.Uri): boolean {
@@ -601,11 +615,18 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 
       if (message.type === "ready") {
         ready = true;
+        await postReaderSettings(webviewPanel.webview);
         await update();
         if (pendingUpdate) {
           pendingUpdate = false;
           await update();
         }
+        return;
+      }
+
+      if (message.type === "setAutoOpenReaderMode") {
+        await setAutoOpenReaderMode(Boolean(message.enabled));
+        await postReaderSettings(webviewPanel.webview);
         return;
       }
 
@@ -808,6 +829,14 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         <label class="reader-settings-switch" for="rainbowHeadingColors">
           <span>彩虹标题颜色</span>
           <input id="rainbowHeadingColors" type="checkbox" />
+          <span class="reader-settings-switch-ui" aria-hidden="true"></span>
+        </label>
+      </section>
+      <section class="reader-settings-group">
+        <h2 class="reader-settings-label">打开方式</h2>
+        <label class="reader-settings-switch" for="autoOpenReaderMode">
+          <span>左键打开 .md 时使用阅读器</span>
+          <input id="autoOpenReaderMode" type="checkbox" />
           <span class="reader-settings-switch-ui" aria-hidden="true"></span>
         </label>
       </section>

@@ -1,9 +1,9 @@
 {
-  "name": "meow-report-markdown-viewer",
-  "displayName": "Meow Report Markdown Viewer",
+  "name": "markdown-reader",
+  "displayName": "Markdown Reader",
   "description": "Render markdown reports with TOC and citation navigation in VS Code editor area.",
-  "version": "0.0.1",
-  "publisher": "meow-agent",
+  "version": "0.0.2",
+  "publisher": "humensmoc",
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -56,7 +56,7 @@
         "meowReportMarkdown.autoOpenReaderMode": {
           "type": "boolean",
           "default": false,
-          "description": "Automatically open .md files with Meow Report Markdown Viewer."
+          "description": "左键打开 .md 文件时自动切换到 Meow Report Markdown Viewer 阅读器。"
         }
       }
     }
