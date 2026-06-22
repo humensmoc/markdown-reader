@@ -127,7 +127,12 @@ document.addEventListener("mouseup", handleMermaidModalDragEnd);
 document.addEventListener("keydown", handleMermaidModalKeydown);
 
 if (vscode) {
+  requestReaderSettings();
   postReadySignal();
+}
+
+function requestReaderSettings() {
+  vscode?.postMessage({ type: "requestReaderSettings" });
 }
 
 function postReadySignal() {
@@ -255,6 +260,9 @@ function setReaderSettingsOpen(open) {
   }
   readerSettingsToggle.setAttribute("aria-expanded", String(open));
   readerSettingsPanel.hidden = !open;
+  if (open) {
+    requestReaderSettings();
+  }
 }
 
 function handleReaderSettingsOutsideClick(event) {

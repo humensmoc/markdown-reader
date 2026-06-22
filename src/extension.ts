@@ -4,6 +4,7 @@ import { buildReportPayload } from "./reportData";
 
 type ViewerMessage =
   | { type: "ready" }
+  | { type: "requestReaderSettings" }
   | { type: "openExternal"; href?: string }
   | { type: "openFile"; href?: string }
   | { type: "saveContent"; content?: string; persist?: boolean }
@@ -12,6 +13,7 @@ type ViewerMessage =
   | { type: "requestReload" };
 
 const READER_VIEW_TYPE = "meowReportMarkdown.viewer";
+const readerWebviews = new Set<vscode.Webview>();
 const textModeUris = new Set<string>();
 const readerIntentUris = new Set<string>();
 const openInReaderModeInflight = new Map<string, Promise<void>>();
@@ -223,6 +225,14 @@ export function activate(context: vscode.ExtensionContext): void {
 
   setupAutoOpenReaderMode(context);
 
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration("meowReportMarkdown.autoOpenReaderMode")) {
+        void broadcastReaderSettings();
+      }
+    })
+  );
+
   setTimeout(() => {
     void reconcileRestoredReaderTabs();
   }, 600);
@@ -238,11 +248,34 @@ async function setAutoOpenReaderMode(enabled: boolean): Promise<void> {
     .update("autoOpenReaderMode", enabled, vscode.ConfigurationTarget.Global);
 }
 
-async function postReaderSettings(webview: vscode.Webview): Promise<void> {
-  await webview.postMessage({
+function readerSettingsMessage(): { type: "settings"; autoOpenReaderMode: boolean } {
+  return {
     type: "settings",
     autoOpenReaderMode: isAutoOpenEnabled()
-  });
+  };
+}
+
+async function postReaderSettings(webview: vscode.Webview): Promise<void> {
+  await webview.postMessage(readerSettingsMessage());
+}
+
+function registerReaderWebview(webview: vscode.Webview): void {
+  readerWebviews.add(webview);
+}
+
+function unregisterReaderWebview(webview: vscode.Webview): void {
+  readerWebviews.delete(webview);
+}
+
+async function broadcastReaderSettings(): Promise<void> {
+  const message = readerSettingsMessage();
+  for (const webview of readerWebviews) {
+    try {
+      await webview.postMessage(message);
+    } catch {
+      // Webview may already be disposed.
+    }
+  }
 }
 
 function hasReaderModeTab(uri: vscode.Uri): boolean {
@@ -557,6 +590,7 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       enableScripts: true,
       localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, "media")]
     };
+    registerReaderWebview(webviewPanel.webview);
 
     let disposed = false;
     let ready = false;
@@ -645,6 +679,11 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         return;
       }
 
+      if (message.type === "requestReaderSettings") {
+        await postReaderSettings(webviewPanel.webview);
+        return;
+      }
+
       if (message.type === "ready") {
         if (ready) {
           return;
@@ -661,7 +700,7 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 
       if (message.type === "setAutoOpenReaderMode") {
         await setAutoOpenReaderMode(Boolean(message.enabled));
-        await postReaderSettings(webviewPanel.webview);
+        await broadcastReaderSettings();
         return;
       }
 
@@ -731,6 +770,7 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 
     webviewPanel.onDidDispose(() => {
       disposed = true;
+      unregisterReaderWebview(webviewPanel.webview);
       if (updateTimer) {
         clearTimeout(updateTimer);
       }
