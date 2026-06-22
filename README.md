@@ -79,16 +79,25 @@ npm run compile
 
 #### 本地打包安装（Cursor）
 
-F5 验证通过后：
+F5 验证通过后，**推荐**使用仓库根目录的一键脚本（编译 → 打 VSIX → 安装到 Cursor）：
+
+| 平台 | 操作 |
+|------|------|
+| Windows | 将 [`Package.bat`](Package.bat) 拖入 cmd / PowerShell，回车 |
+| macOS | 首次执行 `chmod +x Package.sh`，再将 [`Package.sh`](Package.sh) 拖入 Terminal 回车（或 `bash Package.sh`） |
+
+脚本会自动：检查 Node.js → 缺少依赖时 `npm install` → `npm run package:local` → 调用 Cursor CLI 安装 → 提示 **Developer: Reload Window**。
+
+Windows 优先使用 `%LOCALAPPDATA%\Programs\cursor\...\cursor.cmd`；macOS 若 PATH 无 `cursor`，会回退到 `/Applications/Cursor.app/.../cursor`。
+
+也可手动执行：
 
 ```bash
-npm run compile
-npx vsce package --allow-missing-repository --no-rewrite-relative-links
-"/Applications/Cursor.app/Contents/Resources/app/bin/cursor" \
-  --install-extension ./meow-report-markdown-viewer-0.0.1.vsix --force
+npm run package:local
+cursor --install-extension ./markdown-reader-<version>.vsix --force
 ```
 
-Windows / Linux 请将 `cursor` 路径换为本机 CLI；也可用 **Extensions: Install from VSIX...** 图形安装。
+`<version>` 见 `package.json`（当前生成 `markdown-reader-0.0.2.vsix`）。Windows / Linux 若 `cursor` 不在 PATH，请换成本机 CLI 路径，或用 **Extensions: Install from VSIX...** 图形安装。
 
 #### 对外发版（摘要）
 
@@ -190,16 +199,23 @@ Open this repo in Cursor / VS Code → **Run and Debug** → select **Run Extens
 
 #### Local package & install (Cursor)
 
-After F5 verification:
+After F5 verification, **recommended**: use the one-click scripts at the repo root (compile → VSIX → install into Cursor):
+
+| Platform | Action |
+|----------|--------|
+| Windows | Drag [`Package.bat`](Package.bat) into cmd / PowerShell, press Enter |
+| macOS | Run `chmod +x Package.sh` once, then drag [`Package.sh`](Package.sh) into Terminal (or `bash Package.sh`) |
+
+The scripts check Node.js → `npm install` if needed → `npm run package:local` → install via Cursor CLI → prompt **Developer: Reload Window**.
+
+Manual alternative:
 
 ```bash
-npm run compile
-npx vsce package --allow-missing-repository --no-rewrite-relative-links
-"/Applications/Cursor.app/Contents/Resources/app/bin/cursor" \
-  --install-extension ./meow-report-markdown-viewer-0.0.1.vsix --force
+npm run package:local
+cursor --install-extension ./markdown-reader-<version>.vsix --force
 ```
 
-On Windows / Linux, use your local `cursor` CLI path, or install via **Extensions: Install from VSIX...**.
+See `version` in `package.json` (currently produces `markdown-reader-0.0.2.vsix`). On Windows / Linux, use your local `cursor` path if not in PATH, or install via **Extensions: Install from VSIX...**.
 
 #### Public release (summary)
 

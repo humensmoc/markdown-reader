@@ -9,7 +9,7 @@
 ## 流程概览
 
 ```text
-改代码 → F5 调试验证 → 打包 .vsix → 本地安装自测
+改代码 → F5 调试验证 → Package.bat / Package.sh（或手动打包 .vsix）→ 本地安装自测
                               ↓
                     bump version + CHANGELOG
                               ↓
@@ -19,7 +19,7 @@
 | 阶段 | 是否需要改 version | 典型命令 |
 |------|-------------------|----------|
 | 日常 F5 调试 | 否 | F5 / Reload Window |
-| 本地 VSIX 安装 | 建议递增 patch | `vsce package` + `cursor --install-extension` |
+| 本地 VSIX 安装 | 建议递增 patch | `Package.bat` / `Package.sh`（推荐），或 `npm run package:local` + `cursor --install-extension` |
 | 对外发版 | **必须递增** | `vsce publish` / `ovsx publish` |
 
 ---
@@ -93,14 +93,49 @@ F5 会自动执行 `npm run compile`（见 `.vscode/launch.json` 中的 `preLaun
 
 F5 验证没问题后，再打包成 `.vsix` 安装到**日常使用的 Cursor**（而非 Extension Development Host）。
 
-### 3.1 打包
+### 3.0 一键打包（推荐）
+
+仓库根目录提供 GenData 风格脚本，**拖到终端回车**即可完成「编译 → 打 VSIX → 安装到 Cursor」：
+
+| 平台 | 操作 |
+|------|------|
+| Windows | 将 [`Package.bat`](../Package.bat) 拖入 cmd / PowerShell，回车 |
+| macOS | 首次 `chmod +x Package.sh`，再将 [`Package.sh`](../Package.sh) 拖入 Terminal 回车（或 `bash Package.sh`） |
+
+脚本流程：
+
+1. 自动 `cd` 到仓库根目录（与当前终端工作目录无关）
+2. 检查 `node` / `npm`；若无 `node_modules` 则执行 `npm install`
+3. `npm run package:local`（内部为 `compile` + `package`）
+4. 按 `package.json` 的 `name` + `version` 定位 VSIX（如 `markdown-reader-0.0.2.vsix`）
+5. 调用 Cursor CLI 执行 `--install-extension ... --force`
+6. 提示在 Cursor 中 **Developer: Reload Window**
+
+**Cursor CLI 查找顺序**
+
+- Windows：优先 `%LOCALAPPDATA%\Programs\cursor\resources\app\bin\cursor.cmd`，否则 PATH 中的 `cursor`
+- macOS：PATH 中的 `cursor`，否则 `/Applications/Cursor.app/Contents/Resources/app/bin/cursor`
+
+若脚本报「未找到 Cursor CLI」，在 Cursor 中执行 **Shell Command: Install 'cursor' command in PATH**，或确认上述路径存在。
+
+Windows 脚本结束时会 `pause`，便于查看输出；macOS 脚本失败时以非零退出码结束。
+
+### 3.1 手动打包
+
+```bash
+npm run package:local
+```
+
+等价于：
 
 ```bash
 npm run compile
-npx vsce package --allow-missing-repository --no-rewrite-relative-links
+npm run package
 ```
 
-生成文件：`meow-report-markdown-viewer-<version>.vsix`（当前 version 见 `package.json`）。
+其中 `package` 已内置 `--allow-missing-repository --no-rewrite-relative-links`。
+
+生成文件：`<name>-<version>.vsix`（当前为 `markdown-reader-<version>.vsix`，version 见 `package.json`）。
 
 > **说明**：本仓库 README 含相对路径链接（如 `docs/markdown_format_spec.md`），`vsce package` 默认会尝试改写链接并检测 git 仓库；若报错，使用上述两个 flag。正式发布前建议在 `package.json` 中补全 `repository` 字段，并添加 `CHANGELOG.md`。
 
@@ -110,8 +145,15 @@ macOS 上 Cursor CLI 通常不在 PATH 里，使用完整路径：
 
 ```bash
 "/Applications/Cursor.app/Contents/Resources/app/bin/cursor" \
-  --install-extension ./meow-report-markdown-viewer-0.0.1.vsix \
+  --install-extension ./markdown-reader-<version>.vsix \
   --force
+```
+
+Windows 常见路径：
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\cursor\resources\app\bin\cursor.cmd" `
+  --install-extension ".\markdown-reader-<version>.vsix" --force
 ```
 
 `--force` 用于覆盖已安装的同版本扩展。安装后执行 **Developer: Reload Window** 重载 Cursor。
@@ -119,11 +161,10 @@ macOS 上 Cursor CLI 通常不在 PATH 里，使用完整路径：
 验证是否安装成功：
 
 ```bash
-"/Applications/Cursor.app/Contents/Resources/app/bin/cursor" \
-  --list-extensions --show-versions | grep meow
+cursor --list-extensions --show-versions | grep markdown-reader
 ```
 
-应看到：`meow-agent.meow-report-markdown-viewer@<version>`
+应看到：`humensmoc.markdown-reader@<version>`（publisher 与 `package.json` 一致）
 
 ### 3.3 图形界面安装
 
@@ -133,7 +174,7 @@ macOS 上 Cursor CLI 通常不在 PATH 里，使用完整路径：
 
 ### 3.4 本地 VSIX 不会自动更新
 
-手动安装的 `.vsix` **没有自动更新通道**。每次改完代码要重新 `compile` → `package` → `install`（或继续用 F5 开发）。
+手动安装的 `.vsix` **没有自动更新通道**。每次改完代码要重新打包并安装（运行 `Package.bat` / `Package.sh`，或手动 `package:local` + install），或继续用 F5 开发。
 
 ---
 
@@ -201,11 +242,10 @@ https://open-vsx.org/extension/meow-agent/meow-report-markdown-viewer
 适合个人试用最新改动：
 
 ```bash
-# 可选：手动改 package.json 的 patch 版本
-npm run compile
-npx vsce package --allow-missing-repository --no-rewrite-relative-links
-"/Applications/Cursor.app/Contents/Resources/app/bin/cursor" \
-  --install-extension ./meow-report-markdown-viewer-<version>.vsix --force
+# 推荐：Windows 运行 Package.bat，macOS 运行 Package.sh
+# 或手动：
+npm run package:local
+cursor --install-extension ./markdown-reader-<version>.vsix --force
 ```
 
 开发阶段仍优先 F5，不必每次改都打包。
@@ -233,9 +273,9 @@ npx ovsx publish -p $OVSX_PAT
 ### 5.4 标准发版 checklist
 
 1. F5 调试 + fixture 文件自测
-2. 本地 VSIX 安装到干净 Cursor 窗口再测一轮
+2. 本地 VSIX 安装到干净 Cursor 窗口再测一轮（`Package.bat` / `Package.sh` 或手动流程）
 3. 更新 `CHANGELOG.md`
-4. `npx vsce package` 确认无密钥扫描错误
+4. `npm run package` 确认无密钥扫描错误
 5. `npx vsce publish patch`
 6. `npx ovsx publish -p $OVSX_PAT`（若服务 Cursor）
 7. `git push`（若 vsce 自动打了 tag，一并 `git push --tags`）
@@ -255,7 +295,13 @@ npx ovsx publish -p $OVSX_PAT
 
 ### Q3：`vsce package` 报 README 链接或 repository 错误？
 
-使用：
+本仓库 `npm run package` 已带所需 flag。手动执行时使用：
+
+```bash
+npm run package
+```
+
+等价于：
 
 ```bash
 npx vsce package --allow-missing-repository --no-rewrite-relative-links
@@ -283,6 +329,12 @@ npx vsce package --allow-missing-repository --no-rewrite-relative-links
 ```powershell
 & 'C:\Program Files\nodejs\npm.cmd' run compile
 ```
+
+### Q7：一键打包脚本找不到 Cursor？
+
+- Windows：确认 `%LOCALAPPDATA%\Programs\cursor\resources\app\bin\cursor.cmd` 存在，或在 Cursor 中安装 Shell Command
+- macOS：确认 `/Applications/Cursor.app` 已安装，或执行 **Shell Command: Install 'cursor' command in PATH**
+- 仍失败时，用 **Extensions: Install from VSIX...** 手动选择生成的 `.vsix`
 
 ---
 

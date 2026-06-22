@@ -395,6 +395,8 @@ flowchart LR
 
 本地开发：`npm install` → `npm run compile` → F5 **Run Extension** → 在新窗口打开 `docs/fixtures/cite-demo.md` 验收。
 
+本地打包安装：F5 通过后运行根目录 **`Package.bat`**（Windows）或 **`Package.sh`**（macOS），一键完成 compile → VSIX → 安装到 Cursor；详见 [how-to-release&update-local&extension-market.md](../how-to-release&update-local&extension-market.md#30-一键打包推荐)。
+
 ---
 
 ## 11. 相关文档

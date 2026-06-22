@@ -2,7 +2,7 @@
   "name": "markdown-reader",
   "displayName": "Markdown Reader",
   "description": "Render markdown reports with TOC and citation navigation in VS Code editor area.",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "humensmoc",
   "engines": {
     "vscode": "^1.90.0"
@@ -66,7 +66,8 @@
     "copy-mermaid": "node -e \"require('fs').copyFileSync('node_modules/mermaid/dist/mermaid.min.js','media/mermaid.min.js')\"",
     "compile": "tsc -p ./ && npm run copy-mermaid",
     "watch": "tsc -watch -p ./",
-    "package": "vsce package"
+    "package": "vsce package --allow-missing-repository --no-rewrite-relative-links",
+    "package:local": "npm run compile && npm run package"
   },
   "dependencies": {
     "mermaid": "^11.4.0"

@@ -243,9 +243,11 @@ media/report.css
   },
   "main": "./out/extension.js",
   "scripts": {
-    "compile": "tsc -p ./",
+    "copy-mermaid": "node -e \"require('fs').copyFileSync('node_modules/mermaid/dist/mermaid.min.js','media/mermaid.min.js')\"",
+    "compile": "tsc -p ./ && npm run copy-mermaid",
     "watch": "tsc -watch -p ./",
-    "package": "vsce package"
+    "package": "vsce package --allow-missing-repository --no-rewrite-relative-links",
+    "package:local": "npm run compile && npm run package"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

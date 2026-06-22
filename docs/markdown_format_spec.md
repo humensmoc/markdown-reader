@@ -693,9 +693,13 @@ flowchart TD
 
 ### 7.1 只更新本地 Cursor
 
+本仓库推荐根目录 **`Package.bat`**（Windows）或 **`Package.sh`**（macOS）：拖到终端回车，自动 `npm run package:local` 并安装 VSIX。
+
+手动等价命令：
+
 ```bash
-npm run compile && vsce package
-cursor --install-extension ./ext-0.1.1.vsix --force
+npm run package:local
+cursor --install-extension ./markdown-reader-<version>.vsix --force
 ```
 
 开发期优先 **F5**，省去反复打包。
@@ -787,11 +791,11 @@ vsce 1.101+ 与 Marketplace 均会扫密钥 [cite:3][cite:13]。从源码移除�
 npm run compile && code .   # 或 Cursor 打开
 # F5
 
-# 打包
-vsce package
-
-# 安装到 Cursor
-cursor --install-extension ./<name>-<version>.vsix
+# 打包 + 安装到 Cursor（本仓库推荐）
+# Windows: 拖 Package.bat 到终端回车
+# macOS: bash Package.sh
+npm run package:local
+cursor --install-extension ./markdown-reader-<version>.vsix --force
 
 # VS Code 商城（先 vsce login）
 vsce publish patch
@@ -804,7 +808,7 @@ vsce package --target darwin-arm64
 vsce publish --target darwin-arm64 linux-x64
 
 # 已安装
-cursor --list-extensions | grep meow
+cursor --list-extensions | grep markdown-reader
 ```
 
 ---
