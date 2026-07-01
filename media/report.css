@@ -13,6 +13,10 @@
   --muted: var(--vscode-descriptionForeground);
   --blue: #519aba;
   --blue-soft: color-mix(in srgb, #519aba 14%, transparent);
+  --mermaid-bg: color-mix(in srgb, var(--vscode-editor-background) 92%, #000 8%);
+  --mermaid-surface: color-mix(in srgb, var(--vscode-sideBar-background) 84%, var(--vscode-editor-background) 16%);
+  --mermaid-border: color-mix(in srgb, var(--vscode-panel-border) 72%, var(--vscode-editor-foreground) 12%);
+  --mermaid-edge: #21a7c9;
   --shadow: 0 10px 28px color-mix(in srgb, var(--vscode-widget-shadow, #000) 16%, transparent);
   --scroll-track: color-mix(in srgb, var(--vscode-editor-foreground) 12%, transparent);
   --scroll-thumb: color-mix(in srgb, var(--vscode-editor-foreground) 35%, transparent);
@@ -965,18 +969,28 @@ pre code {
 
 .mermaid-block {
   position: relative;
-  overflow: auto;
-  margin: 1em 0;
-  padding: 12px;
-  background: var(--paper-strong);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  overflow: hidden;
+  margin: 18px 0;
+  padding: 18px;
+  background: var(--mermaid-bg);
+  border: 1px solid var(--mermaid-border);
+  border-radius: 6px;
 }
 
 .mermaid-content {
   display: flex;
   justify-content: center;
-  min-height: 48px;
+  justify-content: safe center;
+  min-height: 56px;
+  max-height: min(70vh, 760px);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.mermaid-svg-root {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .mermaid-toolbar {
@@ -1002,9 +1016,9 @@ pre code {
   width: 28px;
   height: 28px;
   padding: 0;
-  border: 1px solid var(--line);
+  border: 1px solid var(--mermaid-border);
   border-radius: 6px;
-  background: color-mix(in srgb, var(--paper-strong) 88%, transparent);
+  background: color-mix(in srgb, var(--mermaid-surface) 88%, transparent);
   color: var(--muted);
   cursor: pointer;
   box-shadow: 0 1px 4px color-mix(in srgb, var(--vscode-widget-shadow, #000) 20%, transparent);
@@ -1013,7 +1027,12 @@ pre code {
 .mermaid-expand-btn:hover {
   color: var(--text);
   border-color: var(--line-strong);
-  background: var(--paper);
+  background: var(--mermaid-surface);
+}
+
+.mermaid-expand-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--mermaid-edge) 70%, transparent);
+  outline-offset: 2px;
 }
 
 .mermaid-expand-btn svg {
@@ -1021,7 +1040,8 @@ pre code {
   height: 14px;
 }
 
-.mermaid-block svg {
+.mermaid-svg-root > svg {
+  display: block;
   max-width: 100%;
   height: auto;
 }
@@ -1077,9 +1097,9 @@ body.mermaid-modal-open {
   inset: 24px;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--line-strong);
-  border-radius: 12px;
-  background: var(--paper);
+  border: 1px solid var(--mermaid-border);
+  border-radius: 8px;
+  background: var(--mermaid-bg);
   box-shadow: var(--shadow);
   overflow: hidden;
 }
@@ -1128,7 +1148,10 @@ body.mermaid-modal-open {
   display: flex;
   align-items: center;
   justify-content: center;
+  align-items: safe center;
+  justify-content: safe center;
   padding: 48px 24px 24px;
+  background: var(--mermaid-bg);
   cursor: default;
   user-select: none;
 }

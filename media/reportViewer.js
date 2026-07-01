@@ -2676,21 +2676,102 @@ function renderMarkdown(content, file) {
   return fragment;
 }
 
+function readCssValue(name, fallback) {
+  const readFrom = (element) => {
+    if (!element) {
+      return "";
+    }
+    return window.getComputedStyle?.(element)?.getPropertyValue(name)?.trim() || "";
+  };
+  return readFrom(document.documentElement) || readFrom(document.body) || fallback;
+}
+
+function buildMermaidConfig() {
+  const editorBackground = readCssValue("--vscode-editor-background", "#1f1f1f");
+  const panelBackground = readCssValue("--vscode-sideBar-background", "#252526");
+  const textColor = readCssValue("--vscode-editor-foreground", "#d6d6d6");
+  const mutedTextColor = readCssValue("--vscode-descriptionForeground", "#9da3a8");
+  const borderColor = readCssValue("--vscode-panel-border", "#454545");
+  const fontFamily = readCssValue("--vscode-font-family", "Inter, Segoe UI, sans-serif");
+  const edgeColor = "#21a7c9";
+
+  return {
+    startOnLoad: false,
+    securityLevel: "strict",
+    theme: "base",
+    darkMode: true,
+    fontFamily,
+    htmlLabels: true,
+    themeVariables: {
+      background: editorBackground,
+      mainBkg: panelBackground,
+      primaryColor: panelBackground,
+      primaryTextColor: textColor,
+      primaryBorderColor: borderColor,
+      secondaryColor: "#303030",
+      tertiaryColor: editorBackground,
+      tertiaryTextColor: mutedTextColor,
+      tertiaryBorderColor: borderColor,
+      lineColor: edgeColor,
+      defaultLinkColor: edgeColor,
+      edgeLabelBackground: editorBackground,
+      clusterBkg: editorBackground,
+      clusterBorder: borderColor,
+      actorBkg: panelBackground,
+      actorBorder: borderColor,
+      actorTextColor: textColor,
+      activationBkgColor: "#303030",
+      activationBorderColor: borderColor,
+      signalColor: edgeColor,
+      signalTextColor: textColor,
+      noteBkgColor: panelBackground,
+      noteTextColor: textColor,
+      fontFamily
+    },
+    flowchart: {
+      curve: "linear",
+      defaultRenderer: "dagre-wrapper",
+      nodeSpacing: 50,
+      rankSpacing: 50
+    }
+  };
+}
+
+function initializeMermaidRenderer() {
+  const config = buildMermaidConfig();
+  const configKey = JSON.stringify(config);
+  if (window.__mermaidConfigKey === configKey) {
+    return;
+  }
+  mermaid.initialize(config);
+  window.__mermaidConfigKey = configKey;
+}
+
+function normalizeMermaidSvg(wrapper) {
+  const svg = wrapper.querySelector("svg");
+  if (!svg) {
+    return;
+  }
+  if (!svg.getAttribute("role")) {
+    svg.setAttribute("role", "img");
+  }
+  svg.setAttribute("focusable", "false");
+  if (
+    !svg.getAttribute("aria-label") &&
+    !svg.getAttribute("aria-labelledby") &&
+    !svg.querySelector("title")
+  ) {
+    svg.setAttribute("aria-label", "Mermaid diagram");
+  }
+}
+
 async function hydrateMermaid(root) {
   const blocks = root.querySelectorAll(".mermaid-block[data-mermaid-source]");
   if (!blocks.length || typeof mermaid === "undefined") {
     return;
   }
 
-  if (!window.__mermaidInitialized) {
-    mermaid.initialize({
-      startOnLoad: false,
-      securityLevel: "strict",
-      theme: document.body.classList.contains("vscode-dark") ? "dark" : "default",
-      fontFamily: "var(--vscode-font-family)"
-    });
-    window.__mermaidInitialized = true;
-  }
+  initializeMermaidRenderer();
 
   ensureMermaidModal();
 
@@ -2707,6 +2788,7 @@ async function hydrateMermaid(root) {
       const wrapper = document.createElement("div");
       wrapper.className = "mermaid-svg-root";
       wrapper.innerHTML = svg;
+      normalizeMermaidSvg(wrapper);
       bindFunctions?.(wrapper);
       content.replaceChildren(wrapper);
       block.classList.add("mermaid-rendered");
