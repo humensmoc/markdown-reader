@@ -69,7 +69,7 @@ function assertCount(file, pattern, expected) {
 assertContains("media/reportViewer.js", "function buildMermaidConfig()");
 assertContains("media/reportViewer.js", 'theme: "base"');
 assertContains("media/reportViewer.js", "darkMode: true");
-assertContains("media/reportViewer.js", 'curve: "linear"');
+assertContains("media/reportViewer.js", 'curve: "stepBefore"');
 assertContains("media/reportViewer.js", 'defaultRenderer: "dagre-wrapper"');
 assertContains("media/reportViewer.js", "window.__mermaidConfigKey");
 assertContains("media/reportViewer.js", "function normalizeMermaidSvg(wrapper)");
@@ -160,7 +160,7 @@ function buildMermaidConfig() {
       fontFamily
     },
     flowchart: {
-      curve: "linear",
+      curve: "stepBefore",
       defaultRenderer: "dagre-wrapper",
       nodeSpacing: 50,
       rankSpacing: 50,
@@ -239,7 +239,7 @@ Run:
 node scripts/verify-mermaid-style.js
 ```
 
-Expected: FAIL with the first remaining missing marker in `media/report.css` or `docs/fixtures/mermaid-cursor-style-demo.md`. It should no longer report missing `buildMermaidConfig`, `curve: "linear"`, or `normalizeMermaidSvg(wrapper);`.
+Expected: FAIL with the first remaining missing marker in `media/report.css` or `docs/fixtures/mermaid-cursor-style-demo.md`. It should no longer report missing `buildMermaidConfig`, `curve: "stepBefore"`, or `normalizeMermaidSvg(wrapper);`.
 
 ---
 
@@ -435,7 +435,7 @@ Create `docs/fixtures/mermaid-cursor-style-demo.md` with this exact content:
 This fixture verifies the Markdown Reader Mermaid baseline:
 
 - Default flowcharts use the reader-level Mermaid config.
-- Flowchart edges should read as straight or angular routes, not soft decorative curves.
+- Flowchart edges should read as right-angle routes, not diagonal lines or soft decorative curves.
 - Nodes should sit on a restrained dark surface with muted borders.
 - Cyan edges and arrowheads should remain easy to follow in Cursor dark themes.
 - Fullscreen preview should keep the same visual tone while preserving zoom and drag.
@@ -448,7 +448,7 @@ flowchart TD
   B --> C{"Mermaid block?"}
   C -- "yes" --> D["Build SVG with base theme"]
   D --> E["Dark surface"]
-  D --> F["Linear flowchart routes"]
+  D --> F["Right-angle flowchart routes"]
   E --> G["Readable preview"]
   F --> G
   C -- "no" --> H["Render normal code block"]
@@ -543,7 +543,7 @@ Use `Open with Meow Report Markdown Viewer`.
 Expected:
 
 - The default flowchart renders in a dark Mermaid surface.
-- Flowchart connectors are straight/angular rather than soft Bezier curves.
+- Flowchart connectors are right-angle routes rather than diagonal lines or soft Bezier curves.
 - Node fill and borders are muted, not bright Mermaid defaults.
 - Directional edges and arrowheads are cyan and easy to trace.
 - The sequence diagram is readable against the same surface.
@@ -579,6 +579,6 @@ Expected:
 
 ## Self-Review
 
-- Spec coverage: The plan maps the research recommendation to `theme: "base"`, dark `themeVariables`, `flowchart.curve: "linear"`, wrapper CSS, and preserved fullscreen zoom. It intentionally leaves visual editing out because the reference docs describe that as a later product layer.
+- Spec coverage: The plan maps the research recommendation to `theme: "base"`, dark `themeVariables`, `flowchart.curve: "stepBefore"`, wrapper CSS, and preserved fullscreen zoom. It intentionally leaves visual editing out because the reference docs describe that as a later product layer.
 - Placeholder scan: Clear. Every file change has concrete content, exact paths, and verification commands.
 - Type consistency: Helper names are consistent across the verifier and implementation steps: `buildMermaidConfig`, `initializeMermaidRenderer`, `normalizeMermaidSvg`, and `window.__mermaidConfigKey`.

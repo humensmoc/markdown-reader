@@ -15,6 +15,13 @@ function assertContains(file, text) {
   }
 }
 
+function assertNotContains(file, text) {
+  const content = read(file);
+  if (content.includes(text)) {
+    throw new Error(`Unexpected ${file} marker: ${text}`);
+  }
+}
+
 function assertCount(file, pattern, expected) {
   const content = read(file);
   const matches = content.match(pattern) || [];
@@ -27,6 +34,7 @@ assertContains("media/reportViewer.js", "function buildMermaidConfig()");
 assertContains("media/reportViewer.js", 'theme: "base"');
 assertContains("media/reportViewer.js", "darkMode: true");
 assertContains("media/reportViewer.js", 'curve: "linear"');
+assertNotContains("media/reportViewer.js", 'curve: "stepBefore"');
 assertContains("media/reportViewer.js", 'defaultRenderer: "dagre-wrapper"');
 assertContains("media/reportViewer.js", "window.__mermaidConfigKey");
 assertContains("media/reportViewer.js", "function normalizeMermaidSvg(wrapper)");
@@ -40,7 +48,8 @@ assertContains("media/report.css", "background: var(--mermaid-bg);");
 assertContains("docs/fixtures/mermaid-cursor-style-demo.md", "# Mermaid Cursor Style Demo");
 assertContains("docs/fixtures/mermaid-cursor-style-demo.md", "flowchart TD");
 assertContains("docs/fixtures/mermaid-cursor-style-demo.md", "sequenceDiagram");
-assertContains("docs/fixtures/mermaid-cursor-style-demo.md", "curve: stepBefore");
+assertContains("docs/fixtures/mermaid-cursor-style-demo.md", "curve: linear");
+assertNotContains("docs/fixtures/mermaid-cursor-style-demo.md", "stepBefore");
 assertCount("docs/fixtures/mermaid-cursor-style-demo.md", /```mermaid/g, 3);
 
 console.log("Mermaid style verification passed.");
