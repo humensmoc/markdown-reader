@@ -1826,15 +1826,25 @@ function renderFile(file) {
 }
 
 function withOutlineNumbers(file) {
+  const headings = file.headings || [];
+  const hasSingleArticleTitle = headings.filter((heading) => Number(heading.level) === 1).length === 1;
   const counters = [];
-  const numberedHeadings = (file.headings || []).map((heading) => {
+  const numberedHeadings = headings.map((heading) => {
     const level = Math.max(1, Math.min(Number(heading.level) || 1, 6));
-    counters.length = level;
-    counters[level - 1] = (counters[level - 1] || 0) + 1;
-    for (let index = 0; index < level - 1; index += 1) {
+    const numberingLevel = hasSingleArticleTitle ? level - 1 : level;
+    if (numberingLevel <= 0) {
+      return {
+        ...heading,
+        cleanText: stripOutlinePrefix(heading.text),
+        outlineNumber: ""
+      };
+    }
+    counters.length = numberingLevel;
+    counters[numberingLevel - 1] = (counters[numberingLevel - 1] || 0) + 1;
+    for (let index = 0; index < numberingLevel - 1; index += 1) {
       if (!counters[index]) counters[index] = 1;
     }
-    const outlineNumber = counters.slice(0, level).join(".");
+    const outlineNumber = counters.slice(0, numberingLevel).join(".");
     return {
       ...heading,
       cleanText: stripOutlinePrefix(heading.text),
