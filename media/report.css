@@ -1697,13 +1697,12 @@ body.editor-mode .annotation-dock {
 }
 
 .annotation-card-header {
-  height: 0;
+  display: flex;
+  min-height: 20px;
+  justify-content: flex-end;
 }
 
 .annotation-card-actions {
-  position: absolute;
-  top: 7px;
-  right: 8px;
   display: flex;
   gap: 3px;
   opacity: 0;

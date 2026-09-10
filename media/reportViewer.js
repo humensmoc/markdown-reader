@@ -2670,6 +2670,19 @@ function activateAnnotation(annotation, { scrollToAnchor = false } = {}) {
   }
 }
 
+function compareAnnotationAnchorOrder(left, right) {
+  const leftAnchor = left.anchorElement;
+  const rightAnchor = right.anchorElement;
+  if (leftAnchor === rightAnchor) return 0;
+  if (!leftAnchor) return 1;
+  if (!rightAnchor) return -1;
+
+  const position = leftAnchor.compareDocumentPosition(rightAnchor);
+  if (position & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+  if (position & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+  return 0;
+}
+
 function renderAnnotationDock() {
   if (!annotationDock) return;
   annotationDock.innerHTML = "";
@@ -2680,8 +2693,12 @@ function renderAnnotationDock() {
 
   const anchorCounts = new Map();
   for (const annotation of openAnnotations) {
-    const anchor = findAnnotationAnchor(annotation);
-    annotation.anchorElement = anchor;
+    annotation.anchorElement = findAnnotationAnchor(annotation);
+  }
+  openAnnotations.sort(compareAnnotationAnchorOrder);
+
+  for (const annotation of openAnnotations) {
+    const anchor = annotation.anchorElement;
 
     const card = document.createElement("article");
     card.className = "annotation-card";
@@ -2863,12 +2880,21 @@ function positionAnnotationCards() {
   const dockRect = annotationDock.getBoundingClientRect();
   const gap = 10;
   let nextTop = Number.NEGATIVE_INFINITY;
-  for (const annotation of renderedAnnotations) {
-    const card = annotation.cardElement;
-    const anchor = annotation.anchorElement;
-    if (!card || !anchor) continue;
-    const anchorRect = anchor.getBoundingClientRect();
-    const desiredTop = anchorRect.top - dockRect.top;
+  const positionedAnnotations = renderedAnnotations
+    .map((annotation, order) => {
+      const card = annotation.cardElement;
+      const anchor = annotation.anchorElement;
+      if (!card || !anchor) return null;
+      return {
+        card,
+        desiredTop: anchor.getBoundingClientRect().top - dockRect.top,
+        order
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.desiredTop - right.desiredTop || left.order - right.order);
+
+  for (const { card, desiredTop } of positionedAnnotations) {
     const top = Math.max(desiredTop, nextTop);
     card.hidden = false;
     const cardHeight = card.offsetHeight;
