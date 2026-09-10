@@ -534,6 +534,109 @@ html.rainbow-headings:not(.show-toc-numbers) .toc-file-title .outline-text {
   position: relative;
 }
 
+.note-properties {
+  margin: 8px 0 26px;
+  padding: 0 0 18px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  color: var(--text);
+  font-size: 0.88em;
+  line-height: 1.45;
+  caret-color: transparent;
+}
+
+.note-properties-title {
+  margin: 0 0 9px;
+  font-size: 0.96em;
+  font-weight: 650;
+}
+
+.note-property-row {
+  display: grid;
+  grid-template-columns: 18px minmax(108px, 140px) minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  min-height: 28px;
+  padding: 3px 0;
+}
+
+.note-property-icon {
+  display: inline-flex;
+  width: 16px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+
+.note-property-icon svg {
+  width: 15px;
+  height: 15px;
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.25;
+}
+
+.note-property-icon--number {
+  align-items: center;
+  font-family: var(--vscode-editor-font-family);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: -0.08em;
+}
+
+.note-property-key {
+  min-width: 0;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--text) 82%, var(--muted));
+  font-family: var(--vscode-editor-font-family);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-property-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.note-property-value--chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.note-property-chip {
+  display: inline-flex;
+  min-height: 20px;
+  align-items: center;
+  padding: 1px 8px;
+  border: 1px solid color-mix(in srgb, var(--line-strong) 72%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--paper-strong) 84%, transparent);
+  line-height: 1.25;
+}
+
+.note-property-chip--tag {
+  border-color: color-mix(in srgb, #9b72e8 42%, transparent);
+  background: color-mix(in srgb, #7c3aed 20%, transparent);
+  color: color-mix(in srgb, #b99bf4 88%, var(--text));
+}
+
+body.wysiwyg-mode .note-properties,
+body.wysiwyg-mode .note-properties * {
+  cursor: default;
+}
+
+@media (max-width: 560px) {
+  .note-property-row {
+    grid-template-columns: 18px minmax(82px, 32%) minmax(0, 1fr);
+    gap: 6px;
+  }
+}
+
 .md-block-draggable {
   position: relative;
 }

@@ -1748,7 +1748,7 @@ function serializeDocumentMarkdown() {
   const body = chunks.filter((chunk) => chunk.trim()).join("\n\n");
   const footnotes = preprocessed.footnoteDefinitions.join("\n\n");
   const annotations = preprocessed.annotations.map((annotation) => annotation.rawMarkdown).filter(Boolean).join("\n\n");
-  return [body, footnotes, annotations].filter((part) => part.trim()).join("\n\n");
+  return [preprocessed.frontmatter, body, footnotes, annotations].filter((part) => part.trim()).join("\n\n");
 }
 
 function createMdDragHandle() {
@@ -2912,6 +2912,10 @@ function extractAnnotationContent(lines) {
   return { body: bodyLines.join("\n"), reply: replyLines.join("\n") };
 }
 
+function extractAnnotationBody(lines) {
+  return extractAnnotationContent(lines).body;
+}
+
 function extractObsidianFrontmatter(lines) {
   if (!Array.isArray(lines) || !/^\uFEFF?---\s*$/.test(String(lines[0] || ""))) {
     return null;
@@ -3092,9 +3096,17 @@ function preprocessMarkdownContent(content) {
   const footnoteDefinitions = [];
   const annotations = [];
   const bodyLines = [];
+  const sourceLines = String(content || "").split(/\r?\n/);
+  const frontmatter = extractObsidianFrontmatter(sourceLines);
   const rawLines = normalizeMarkdownLines(content);
   let inCode = false;
   let openFence = null;
+
+  if (frontmatter) {
+    for (let index = 0; index <= frontmatter.endLine; index += 1) {
+      rawLines[index] = "";
+    }
+  }
 
   for (let index = 0; index < rawLines.length; index += 1) {
     const line = rawLines[index];
@@ -3170,7 +3182,14 @@ function preprocessMarkdownContent(content) {
     footnoteDefinitions.push(definitionLines.join("\n"));
   }
 
-  return { lines: bodyLines, footnotes, footnoteDefinitions, annotations };
+  return {
+    lines: bodyLines,
+    footnotes,
+    footnoteDefinitions,
+    annotations,
+    frontmatter: frontmatter?.rawMarkdown || "",
+    frontmatterFields: parseObsidianFrontmatter(frontmatter?.rawMarkdown || "")
+  };
 }
 
 function parseBlockquote(lines, startIndex) {
@@ -3979,6 +3998,16 @@ function renderMarkdown(content, file) {
 
   const footnotesSection = renderFootnotesSection(context);
   if (footnotesSection) fragment.appendChild(footnotesSection);
+
+  const properties = renderReadonlyFrontmatter(preprocessed.frontmatterFields);
+  if (properties) {
+    const firstElement = fragment.firstElementChild;
+    if (firstElement?.tagName === "H1") {
+      firstElement.after(properties);
+    } else {
+      fragment.insertBefore(properties, fragment.firstChild);
+    }
+  }
 
   return fragment;
 }

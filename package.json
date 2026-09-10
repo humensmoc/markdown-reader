@@ -65,6 +65,7 @@
   "scripts": {
     "copy-mermaid": "node -e \"require('fs').copyFileSync('node_modules/mermaid/dist/mermaid.min.js','media/mermaid.min.js')\"",
     "compile": "tsc -p ./ && npm run copy-mermaid",
+    "verify-frontmatter": "node scripts/verify-frontmatter.js",
     "watch": "tsc -watch -p ./",
     "package": "vsce package --allow-missing-repository --no-rewrite-relative-links --skip-license",
     "package:local": "npm run compile && npm run package"

@@ -34,10 +34,11 @@ function isCodeFenceClose(line: string, openFence: CodeFence | null): boolean {
 export function extractMarkdownHeadings(content: string, fileName: string): ReportHeading[] {
   const headings: ReportHeading[] = [];
   const lines = String(content || "").split(/\r?\n/);
+  const frontmatterEnd = findFrontmatterEnd(lines);
   let inCode = false;
   let openCodeFence: CodeFence | null = null;
 
-  for (let index = 0; index < lines.length; index += 1) {
+  for (let index = frontmatterEnd + 1; index < lines.length; index += 1) {
     const line = lines[index];
     const fence = parseCodeFenceLine(line);
     if (fence) {
@@ -69,6 +70,20 @@ export function extractMarkdownHeadings(content: string, fileName: string): Repo
   }
 
   return headings;
+}
+
+function findFrontmatterEnd(lines: string[]): number {
+  if (!/^\uFEFF?---\s*$/.test(String(lines[0] || ""))) {
+    return -1;
+  }
+
+  for (let index = 1; index < lines.length; index += 1) {
+    if (/^(?:---|\.\.\.)\s*$/.test(String(lines[index] || ""))) {
+      return index;
+    }
+  }
+
+  return -1;
 }
 
 function makeAnchor(fileName: string, index: number, text: string): string {
