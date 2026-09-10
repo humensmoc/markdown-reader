@@ -224,6 +224,13 @@ body.editor-mode .reader-tools-root {
   align-items: stretch;
   border-bottom: 1px solid var(--line);
   background: var(--paper-strong);
+  transition: opacity 0.14s ease, visibility 0.14s ease;
+}
+
+.toc-dock:not(.collapsed):not(:hover):not(:focus-within) .toc-toolbar {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .toc-toggle {
