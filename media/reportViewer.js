@@ -1724,34 +1724,9 @@ function serializeMarkdownBranch(branch, lines) {
   return bodyText ? `${headingText}\n\n${bodyText}` : headingText;
 }
 
-function extractFootnoteSuffix(content) {
-  const rawLines = String(content || "").split(/\r?\n/);
-  const collected = [];
-  let index = rawLines.length - 1;
-
-  while (index >= 0) {
-    const line = rawLines[index];
-    const trimmed = line.trim();
-    const isDefinition = /^\[\^[^\]]+\]:/.test(trimmed);
-    const isContinuation = collected.length > 0 && /^(\s{4,}|\t)/.test(line);
-    const isBlankGap = collected.length > 0 && !trimmed;
-
-    if (isDefinition || isContinuation || isBlankGap) {
-      collected.unshift(line);
-      index -= 1;
-      continue;
-    }
-    break;
-  }
-
-  while (collected.length && !collected[0].trim()) {
-    collected.shift();
-  }
-  return collected.join("\n");
-}
-
 function serializeDocumentMarkdown() {
-  const lines = preprocessMarkdownContent(latestDocumentText).lines;
+  const preprocessed = preprocessMarkdownContent(latestDocumentText);
+  const lines = preprocessed.lines;
   const chunks = [];
 
   for (const markdownBody of document.querySelectorAll("#reportContent .markdown-body")) {
@@ -1763,11 +1738,9 @@ function serializeDocumentMarkdown() {
   }
 
   const body = chunks.filter((chunk) => chunk.trim()).join("\n\n");
-  const footnotes = extractFootnoteSuffix(latestDocumentText);
-  if (!footnotes.trim()) {
-    return body;
-  }
-  return body ? `${body}\n\n${footnotes}` : footnotes;
+  const footnotes = preprocessed.footnoteDefinitions.join("\n\n");
+  const annotations = preprocessed.annotations.map((annotation) => annotation.rawMarkdown).filter(Boolean).join("\n\n");
+  return [body, footnotes, annotations].filter((part) => part.trim()).join("\n\n");
 }
 
 function createMdDragHandle() {

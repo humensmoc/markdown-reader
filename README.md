@@ -14,6 +14,7 @@
 - 标题自动编号
 - 表格、代码块、粗体、斜体、行内代码渲染
 - `[cite: n]` 引用跳转与返回原文（正文只显示蓝色数字；来源行以 `[cite source]` 标记，见 [格式规范](docs/markdown_format_spec.md)）
+- 内嵌批注：批注保存在当前 Markdown 中，在本阅读器显示于目录对侧，在其他阅读器退化为普通引用块
 
 ### 安装
 
@@ -40,6 +41,7 @@
 
 - **单文件渲染**：打开哪个 `.md` 就只渲染当前文件，不会扫描或合并同目录其他 Markdown
 - **目录**：子标题可折叠；滚动正文时高亮当前段落；可拖动右边缘调整宽度（宽度会本地保存）
+- **批注**：选中正文后添加批注；可编辑、删除并点击定位高亮原文；不会新建旁支文件，批注统一追加到当前 Markdown 末尾
 - **链接**：`http` / `https` / `mailto` 走系统浏览器；相对 `.md` 在编辑器内打开；`#anchor` 在 webview 内跳转；危险协议（如 `javascript:`）会被拦截
 
 ### 常见问题
@@ -131,6 +133,7 @@ A single-file Markdown reader extension for VS Code / Cursor. Features:
 - Automatic heading numbering
 - Tables, code blocks, bold, italic, and inline code rendering
 - `[cite: n]` citation navigation with jump-back (body shows blue numbers only; source lines use `[cite source]` — see [format spec](docs/markdown_format_spec.md))
+- Embedded annotations stored in the current Markdown; this reader shows them opposite the TOC, while other readers render ordinary blockquotes
 
 ### Installation
 
@@ -157,6 +160,7 @@ To auto-switch every `.md` file to the reader on left-click:
 
 - **Single-file rendering**: Only the opened `.md` is rendered; sibling Markdown files in the same folder are not scanned or merged
 - **TOC**: Collapsible sub-headings; scroll-sync highlight; drag the right edge to resize (width persisted locally)
+- **Annotations**: Select body text to add one, then edit, delete, or click it to highlight the source text; annotations are appended to the end of the current Markdown instead of a companion file
 - **Links**: `http` / `https` / `mailto` open in the system browser; relative `.md` opens in the editor; `#anchor` jumps inside the webview; dangerous schemes (e.g. `javascript:`) are blocked
 
 ### FAQ
