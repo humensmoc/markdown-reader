@@ -5,11 +5,25 @@ import { buildReportPayload } from "./reportData";
 type ViewerMessage =
   | { type: "ready" }
   | { type: "requestReaderSettings" }
+  | { type: "requestReaderStyle" }
+  | { type: "saveReaderStyle"; settings?: unknown }
   | { type: "openExternal"; href?: string }
   | { type: "openFile"; href?: string }
   | { type: "saveContent"; content?: string; persist?: boolean }
   | { type: "setAutoOpenReaderMode"; enabled?: boolean }
   | { type: "editorState"; dirty?: boolean; inEditorMode?: boolean; inWysiwygMode?: boolean }
+  | {
+      type: "addAnnotation";
+      selectedText?: string;
+      comment?: string;
+      lineStart?: number;
+      lineEnd?: number;
+      heading?: string;
+      anchor?: string;
+    }
+  | { type: "updateAnnotation"; annotationId?: string; comment?: string }
+  | { type: "deleteAnnotation"; annotationId?: string }
+  | { type: "normalizeAnnotations"; annotationIds?: string[] }
   | { type: "requestReload" };
 
 const READER_VIEW_TYPE = "meowReportMarkdown.viewer";
@@ -19,6 +33,95 @@ const readerIntentUris = new Set<string>();
 const openInReaderModeInflight = new Map<string, Promise<void>>();
 const extensionActivatedAt = Date.now();
 const STARTUP_GRACE_MS = 1200;
+
+type ReaderStyleSettings = {
+  bodyFontSize: number;
+  lineHeight: number;
+  contentWidth: number;
+  tocFontSize: number;
+  paragraphSpacing: number;
+  listItemSpacing: number;
+  flatHeadingSize: number;
+  h1Size: number;
+  h2Size: number;
+  h3Size: number;
+  h4Size: number;
+  h5Size: number;
+  h6Size: number;
+  h1MarginTop: number;
+  h2MarginTop: number;
+  h3MarginTop: number;
+  h4MarginTop: number;
+  h5MarginTop: number;
+  h6MarginTop: number;
+  h1MarginBottom: number;
+  headingMarginBottom: number;
+};
+
+const DEFAULT_READER_STYLE: ReaderStyleSettings = {
+  bodyFontSize: 16,
+  lineHeight: 1.5,
+  contentWidth: 700,
+  tocFontSize: 13,
+  paragraphSpacing: 16,
+  listItemSpacing: 4.8,
+  flatHeadingSize: 23,
+  h1Size: 28,
+  h2Size: 24,
+  h3Size: 21,
+  h4Size: 18,
+  h5Size: 16,
+  h6Size: 15,
+  h1MarginTop: 0,
+  h2MarginTop: 38,
+  h3MarginTop: 32,
+  h4MarginTop: 28,
+  h5MarginTop: 24,
+  h6MarginTop: 24,
+  h1MarginBottom: 24,
+  headingMarginBottom: 12
+};
+
+function normalizeStyleNumber(
+  source: Record<string, unknown>,
+  key: keyof ReaderStyleSettings,
+  min: number,
+  max: number,
+  precision = 1
+): number {
+  const candidate = Number(source[key]);
+  const fallback = DEFAULT_READER_STYLE[key];
+  const bounded = Number.isFinite(candidate) ? Math.min(max, Math.max(min, candidate)) : fallback;
+  const factor = 10 ** precision;
+  return Math.round(bounded * factor) / factor;
+}
+
+function normalizeReaderStyle(value: unknown): ReaderStyleSettings {
+  const source = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  return {
+    bodyFontSize: normalizeStyleNumber(source, "bodyFontSize", 12, 24),
+    lineHeight: normalizeStyleNumber(source, "lineHeight", 1.2, 2, 2),
+    contentWidth: normalizeStyleNumber(source, "contentWidth", 480, 1200, 0),
+    tocFontSize: normalizeStyleNumber(source, "tocFontSize", 10, 20),
+    paragraphSpacing: normalizeStyleNumber(source, "paragraphSpacing", 0, 32),
+    listItemSpacing: normalizeStyleNumber(source, "listItemSpacing", 0, 20),
+    flatHeadingSize: normalizeStyleNumber(source, "flatHeadingSize", 14, 36),
+    h1Size: normalizeStyleNumber(source, "h1Size", 18, 48),
+    h2Size: normalizeStyleNumber(source, "h2Size", 16, 40),
+    h3Size: normalizeStyleNumber(source, "h3Size", 14, 36),
+    h4Size: normalizeStyleNumber(source, "h4Size", 13, 32),
+    h5Size: normalizeStyleNumber(source, "h5Size", 12, 28),
+    h6Size: normalizeStyleNumber(source, "h6Size", 12, 28),
+    h1MarginTop: normalizeStyleNumber(source, "h1MarginTop", 0, 80),
+    h2MarginTop: normalizeStyleNumber(source, "h2MarginTop", 0, 80),
+    h3MarginTop: normalizeStyleNumber(source, "h3MarginTop", 0, 80),
+    h4MarginTop: normalizeStyleNumber(source, "h4MarginTop", 0, 80),
+    h5MarginTop: normalizeStyleNumber(source, "h5MarginTop", 0, 80),
+    h6MarginTop: normalizeStyleNumber(source, "h6MarginTop", 0, 80),
+    h1MarginBottom: normalizeStyleNumber(source, "h1MarginBottom", 0, 48),
+    headingMarginBottom: normalizeStyleNumber(source, "headingMarginBottom", 0, 48)
+  };
+}
 
 interface GitChangeState {
   uri: vscode.Uri;
@@ -684,12 +787,18 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         return;
       }
 
+      if (message.type === "requestReaderStyle") {
+        await this.postReaderStyle(webviewPanel.webview);
+        return;
+      }
+
       if (message.type === "ready") {
         if (ready) {
           return;
         }
         ready = true;
         await postReaderSettings(webviewPanel.webview);
+        await this.postReaderStyle(webviewPanel.webview);
         await update();
         if (pendingUpdate) {
           pendingUpdate = false;
@@ -727,6 +836,66 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         webviewEditorDirty = Boolean(message.dirty);
         webviewInEditorMode = Boolean(message.inEditorMode);
         webviewInWysiwygMode = Boolean(message.inWysiwygMode);
+        return;
+      }
+
+      if (message.type === "saveReaderStyle") {
+        try {
+          const settings = await this.saveReaderStyle(message.settings);
+          await this.broadcastReaderStyle(settings);
+          await postToWebview({
+            type: "readerStyleSaved",
+            settings,
+            filePath: this.readerStyleUri.fsPath || this.readerStyleUri.toString()
+          });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          await postToWebview({ type: "readerStyleError", message: detail });
+        }
+        return;
+      }
+
+      if (message.type === "addAnnotation") {
+        try {
+          await this.insertAnnotation(document, message);
+          await postToWebview({ type: "annotationSaved" });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          await postToWebview({ type: "annotationError", message: detail });
+        }
+        return;
+      }
+
+      if (message.type === "updateAnnotation") {
+        try {
+          await this.updateAnnotation(document, message);
+          await postToWebview({ type: "annotationUpdated" });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          await postToWebview({ type: "annotationError", message: detail });
+        }
+        return;
+      }
+
+      if (message.type === "deleteAnnotation") {
+        try {
+          await this.deleteAnnotation(document, message);
+          await postToWebview({ type: "annotationDeleted" });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          await postToWebview({ type: "annotationError", message: detail });
+        }
+        return;
+      }
+
+      if (message.type === "normalizeAnnotations") {
+        try {
+          const changed = await this.normalizeAnnotationPlacement(document, message.annotationIds);
+          if (changed) await postToWebview({ type: "annotationsNormalized" });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          await postToWebview({ type: "annotationError", message: detail });
+        }
         return;
       }
 
@@ -801,6 +970,258 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     } catch {
       // Ignore invalid external URL.
     }
+  }
+
+  private get readerStyleUri(): vscode.Uri {
+    return vscode.Uri.joinPath(this.context.globalStorageUri, "reader-style.json");
+  }
+
+  private async readReaderStyle(): Promise<{ settings: ReaderStyleSettings; exists: boolean }> {
+    try {
+      const bytes = await vscode.workspace.fs.readFile(this.readerStyleUri);
+      const parsed = JSON.parse(new TextDecoder("utf-8").decode(bytes));
+      return { settings: normalizeReaderStyle(parsed), exists: true };
+    } catch (error) {
+      if (error instanceof vscode.FileSystemError && error.code === "FileNotFound") {
+        return { settings: { ...DEFAULT_READER_STYLE }, exists: false };
+      }
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`样式配置文件读取失败：${detail}`);
+    }
+  }
+
+  private async postReaderStyle(webview: vscode.Webview): Promise<void> {
+    try {
+      const result = await this.readReaderStyle();
+      await webview.postMessage({
+        type: "readerStyleSettings",
+        settings: result.settings,
+        exists: result.exists,
+        filePath: this.readerStyleUri.fsPath || this.readerStyleUri.toString()
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await webview.postMessage({ type: "readerStyleError", message: detail });
+    }
+  }
+
+  private async saveReaderStyle(value: unknown): Promise<ReaderStyleSettings> {
+    const settings = normalizeReaderStyle(value);
+    await vscode.workspace.fs.createDirectory(this.context.globalStorageUri);
+    const content = JSON.stringify(
+      {
+        version: 1,
+        updatedAt: new Date().toISOString(),
+        ...settings
+      },
+      null,
+      2
+    );
+    await vscode.workspace.fs.writeFile(this.readerStyleUri, new TextEncoder().encode(`${content}\n`));
+    return settings;
+  }
+
+  private async broadcastReaderStyle(settings: ReaderStyleSettings): Promise<void> {
+    const message = {
+      type: "readerStyleSettings",
+      settings,
+      exists: true,
+      filePath: this.readerStyleUri.fsPath || this.readerStyleUri.toString()
+    };
+    for (const webview of readerWebviews) {
+      try {
+        await webview.postMessage(message);
+      } catch {
+        // Webview may already be disposed.
+      }
+    }
+  }
+
+  private async insertAnnotation(
+    document: vscode.TextDocument,
+    message: Extract<ViewerMessage, { type: "addAnnotation" }>
+  ): Promise<void> {
+    const selectedText = String(message.selectedText || "").trim();
+    const comment = String(message.comment || "").trim();
+    if (!selectedText || !comment) {
+      throw new Error("选中文本和批注内容不能为空。");
+    }
+
+    const createdAt = new Date().toISOString();
+    const id = `annotation-${createdAt.replace(/[^0-9]/g, "")}`;
+    const lineStart = Number.isFinite(message.lineStart) ? Math.max(1, Number(message.lineStart)) : undefined;
+    const lineEnd = Number.isFinite(message.lineEnd)
+      ? Math.max(lineStart || 1, Number(message.lineEnd))
+      : lineStart;
+    const heading = String(message.heading || "").trim();
+    const anchor = String(message.anchor || "").trim();
+    const metaLines = [
+      `id: ${JSON.stringify(id)}`,
+      `quote: ${JSON.stringify(selectedText)}`,
+      `created_at: ${JSON.stringify(createdAt)}`
+    ];
+    if (lineStart) metaLines.push(`line_start: ${lineStart}`);
+    if (lineEnd) metaLines.push(`line_end: ${lineEnd}`);
+    if (heading) metaLines.push(`heading: ${JSON.stringify(heading)}`);
+    if (anchor) metaLines.push(`anchor: ${JSON.stringify(anchor)}`);
+
+    const quoteLabel = selectedText.replace(/\s+/g, " ").slice(0, 80);
+    const quotedComment = comment
+      .split(/\r?\n/)
+      .map((line) => (line ? `> ${line}` : ">"));
+    const entry = [
+      "<!-- mr-annotation:start",
+      ...metaLines,
+      "-->",
+      `> **批注：${quoteLabel}${selectedText.replace(/\s+/g, " ").length > 80 ? "…" : ""}**`,
+      ">",
+      ...quotedComment,
+      "<!-- mr-annotation:end -->"
+    ].join("\n");
+
+    const currentContent = document.getText();
+    const insertAt = document.positionAt(currentContent.length);
+    const insertion = `${currentContent.endsWith("\n") ? "\n" : "\n\n"}${entry}\n`;
+    const edit = new vscode.WorkspaceEdit();
+    edit.insert(document.uri, insertAt, insertion);
+    const applied = await vscode.workspace.applyEdit(edit);
+    if (!applied) {
+      throw new Error("无法把批注写入当前 Markdown 文档。");
+    }
+    const saved = await document.save();
+    if (!saved) {
+      throw new Error("批注已写入编辑器，但当前 Markdown 尚未保存到磁盘。");
+    }
+  }
+
+  private findAnnotationBlock(
+    content: string,
+    annotationId: string
+  ): { start: number; end: number; metaEnd: number; metadata: Record<string, unknown> } | null {
+    const startMarker = "<!-- mr-annotation:start";
+    const endMarker = "<!-- mr-annotation:end -->";
+    let searchFrom = 0;
+    while (searchFrom < content.length) {
+      const start = content.indexOf(startMarker, searchFrom);
+      if (start < 0) return null;
+      const metaEnd = content.indexOf("-->", start + startMarker.length);
+      if (metaEnd < 0) return null;
+      const endStart = content.indexOf(endMarker, metaEnd + 3);
+      if (endStart < 0) return null;
+      const metadata: Record<string, unknown> = {};
+      const metaText = content.slice(start + startMarker.length, metaEnd);
+      for (const line of metaText.split(/\r?\n/)) {
+        const match = /^([a-z_][a-z0-9_]*):\s*(.*)$/i.exec(line.trim());
+        if (!match) continue;
+        let value: unknown = match[2].trim();
+        try {
+          value = JSON.parse(String(value));
+        } catch {
+          // Preserve forward-compatible unquoted metadata.
+        }
+        metadata[match[1].toLowerCase()] = value;
+      }
+      const end = endStart + endMarker.length;
+      if (String(metadata.id || "") === annotationId) {
+        return { start, end, metaEnd: metaEnd + 3, metadata };
+      }
+      searchFrom = end;
+    }
+    return null;
+  }
+
+  private async replaceAnnotationRange(
+    document: vscode.TextDocument,
+    startOffset: number,
+    endOffset: number,
+    replacement: string
+  ): Promise<void> {
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(
+      document.uri,
+      new vscode.Range(document.positionAt(startOffset), document.positionAt(endOffset)),
+      replacement
+    );
+    const applied = await vscode.workspace.applyEdit(edit);
+    if (!applied) throw new Error("无法更新当前 Markdown 中的批注。");
+    const saved = await document.save();
+    if (!saved) throw new Error("批注已更新到编辑器，但当前 Markdown 尚未保存到磁盘。");
+  }
+
+  private async updateAnnotation(
+    document: vscode.TextDocument,
+    message: Extract<ViewerMessage, { type: "updateAnnotation" }>
+  ): Promise<void> {
+    const annotationId = String(message.annotationId || "").trim();
+    const comment = String(message.comment || "").trim();
+    if (!annotationId || !comment) throw new Error("批注 ID 和批注内容不能为空。");
+    const content = document.getText();
+    const block = this.findAnnotationBlock(content, annotationId);
+    if (!block) throw new Error("没有在当前 Markdown 中找到这条批注。");
+    const eol = content.includes("\r\n") ? "\r\n" : "\n";
+    const selectedText = String(block.metadata.quote || "");
+    const compactQuote = selectedText.replace(/\s+/g, " ");
+    const quoteLabel = compactQuote.slice(0, 80);
+    const quotedComment = comment
+      .split(/\r?\n/)
+      .map((line) => (line ? `> ${line}` : ">"))
+      .join(eol);
+    const replacement = [
+      content.slice(block.start, block.metaEnd),
+      `> **批注：${quoteLabel}${compactQuote.length > 80 ? "…" : ""}**`,
+      ">",
+      quotedComment,
+      "<!-- mr-annotation:end -->"
+    ].join(eol);
+    await this.replaceAnnotationRange(document, block.start, block.end, replacement);
+  }
+
+  private async deleteAnnotation(
+    document: vscode.TextDocument,
+    message: Extract<ViewerMessage, { type: "deleteAnnotation" }>
+  ): Promise<void> {
+    const annotationId = String(message.annotationId || "").trim();
+    if (!annotationId) throw new Error("批注 ID 不能为空。");
+    const content = document.getText();
+    const block = this.findAnnotationBlock(content, annotationId);
+    if (!block) throw new Error("没有在当前 Markdown 中找到这条批注。");
+    let start = block.start;
+    let end = block.end;
+    if (content.slice(start - 4, start) === "\r\n\r\n") start -= 2;
+    else if (content.slice(start - 2, start) === "\n\n") start -= 1;
+    if (content.slice(end, end + 2) === "\r\n") end += 2;
+    else if (content[end] === "\n") end += 1;
+    await this.replaceAnnotationRange(document, start, end, "");
+  }
+
+  private async normalizeAnnotationPlacement(
+    document: vscode.TextDocument,
+    annotationIds: string[] | undefined
+  ): Promise<boolean> {
+    const ids = Array.from(new Set((annotationIds || []).map((id) => String(id || "").trim()).filter(Boolean)));
+    if (!ids.length) return false;
+    const content = document.getText();
+    const blocks = ids
+      .map((id) => this.findAnnotationBlock(content, id))
+      .filter((block): block is NonNullable<typeof block> => Boolean(block))
+      .sort((a, b) => a.start - b.start);
+    if (!blocks.length) return false;
+    const eol = content.includes("\r\n") ? "\r\n" : "\n";
+    const rawBlocks = blocks.map((block) => content.slice(block.start, block.end));
+    let remaining = content;
+    for (const block of [...blocks].reverse()) {
+      let start = block.start;
+      let end = block.end;
+      if (remaining.slice(start - 2, start) === "\r\n") start -= 2;
+      else if (remaining[start - 1] === "\n") start -= 1;
+      if (remaining.slice(end, end + 2) === "\r\n") end += 2;
+      else if (remaining[end] === "\n") end += 1;
+      remaining = `${remaining.slice(0, start)}${remaining.slice(end)}`;
+    }
+    const normalized = `${remaining.trimEnd()}${remaining.trim() ? `${eol}${eol}` : ""}${rawBlocks.join(`${eol}${eol}`)}${eol}`;
+    if (normalized === content) return false;
+    await this.replaceAnnotationRange(document, 0, content.length, normalized);
+    return true;
   }
 
   private async applyDocumentContent(
@@ -917,10 +1338,14 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 <body>
   <main id="reportLayout" class="report-layout layout-toc-open">
     <aside id="tocDock" class="toc-dock" aria-label="文档目录">
-      <button id="tocToggle" type="button" class="toc-toggle" aria-expanded="true" title="收起目录">收起目录</button>
+      <div class="toc-toolbar">
+        <button id="tocToggle" type="button" class="toc-toggle" aria-expanded="true" title="收起目录">收起目录</button>
+        <button id="tocSideToggle" type="button" class="toc-side-toggle" aria-label="将目录移到右侧" title="将目录移到右侧">→</button>
+      </div>
       <nav id="toc" class="toc"></nav>
       <div id="tocResizeHandle" class="toc-resize-handle" role="separator" aria-orientation="vertical" aria-label="调整目录宽度"></div>
     </aside>
+    <aside id="annotationDock" class="annotation-dock annotation-right" aria-label="文档批注" hidden></aside>
     <article id="reportContent" class="report-content"></article>
     <textarea
       id="reportEditor"
@@ -935,11 +1360,15 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     <button id="editorSaveBtn" type="button" class="editor-mode-btn primary" hidden>保存并预览</button>
     <button id="editorCancelBtn" type="button" class="editor-mode-btn" hidden>取消</button>
   </div>
-  <div class="reader-settings-root">
-    <button id="readerSettingsToggle" type="button" class="reader-settings-toggle" aria-expanded="false" aria-controls="readerSettingsPanel" title="阅读设置">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm8.94 4.88a8.96 8.96 0 0 0 .06-1.76l2.03-1.58a.75.75 0 0 0 .18-.96l-1.92-3.32a.75.75 0 0 0-.9-.33l-2.39.96a9.06 9.06 0 0 0-1.52-.88l-.36-2.54A.75.75 0 0 0 14.9 2h-3.8a.75.75 0 0 0-.74.65l-.36 2.54c-.54.22-1.05.5-1.52.88l-2.39-.96a.75.75 0 0 0-.9.33L2.27 8.96a.75.75 0 0 0 .18.96l2.03 1.58c-.04.29-.06.58-.06.88s.02.59.06.88L2.45 14.9a.75.75 0 0 0-.18.96l1.92 3.32c.18.31.57.45.9.33l2.39-.96c.47.38.98.66 1.52.88l.36 2.54c.08.57.62 1 1.19 1h3.8c.57 0 1.11-.43 1.19-1l.36-2.54c.54-.22 1.05-.5 1.52-.88l2.39.96c.33.12.72-.02.9-.33l1.92-3.32a.75.75 0 0 0-.18-.96l-2.03-1.58Z"/></svg>
+  <div class="reader-tools-root">
+    <button id="reloadDocumentBtn" type="button" class="reader-tool-button" title="重新加载文档" aria-label="重新加载文档">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 7.75 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35Z"/></svg>
     </button>
-    <div id="readerSettingsPanel" class="reader-settings-panel" hidden role="dialog" aria-label="阅读设置">
+    <div class="reader-settings-root">
+      <button id="readerSettingsToggle" type="button" class="reader-settings-toggle" aria-expanded="false" aria-controls="readerSettingsPanel" title="阅读设置">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm8.94 4.88a8.96 8.96 0 0 0 .06-1.76l2.03-1.58a.75.75 0 0 0 .18-.96l-1.92-3.32a.75.75 0 0 0-.9-.33l-2.39.96a9.06 9.06 0 0 0-1.52-.88l-.36-2.54A.75.75 0 0 0 14.9 2h-3.8a.75.75 0 0 0-.74.65l-.36 2.54c-.54.22-1.05.5-1.52.88l-2.39-.96a.75.75 0 0 0-.9.33L2.27 8.96a.75.75 0 0 0 .18.96l2.03 1.58c-.04.29-.06.58-.06.88s.02.59.06.88L2.45 14.9a.75.75 0 0 0-.18.96l1.92 3.32c.18.31.57.45.9.33l2.39-.96c.47.38.98.66 1.52.88l.36 2.54c.08.57.62 1 1.19 1h3.8c.57 0 1.11-.43 1.19-1l.36-2.54c.54-.22 1.05-.5 1.52-.88l2.39.96c.33.12.72-.02.9-.33l1.92-3.32a.75.75 0 0 0-.18-.96l-2.03-1.58Z"/></svg>
+      </button>
+      <div id="readerSettingsPanel" class="reader-settings-panel" hidden role="dialog" aria-label="阅读设置">
       <section class="reader-settings-group">
         <h2 class="reader-settings-label">字号</h2>
         <div class="reader-settings-control">
@@ -947,6 +1376,8 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
           <span id="fontValue" class="reader-settings-value">100%</span>
           <button id="fontIncrease" type="button" aria-label="放大字号">+</button>
         </div>
+        <button id="readerStyleButton" type="button" class="reader-settings-action">自定义阅读样式…</button>
+        <button id="tocPositionButton" type="button" class="reader-settings-action">目录位置…</button>
       </section>
       <section class="reader-settings-group">
         <h2 class="reader-settings-label">标题</h2>
@@ -986,7 +1417,6 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
           <input id="enableWysiwygMode" type="checkbox" />
           <span class="reader-settings-switch-ui" aria-hidden="true"></span>
         </label>
-        <button id="reloadDocumentBtn" type="button" class="reader-settings-action">重新加载文档</button>
       </section>
       <section class="reader-settings-group">
         <h2 class="reader-settings-label">交互</h2>
@@ -996,6 +1426,7 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
           <span class="reader-settings-switch-ui" aria-hidden="true"></span>
         </label>
       </section>
+      </div>
     </div>
   </div>
   <script nonce="${nonce}" src="${mermaidUri}"></script>

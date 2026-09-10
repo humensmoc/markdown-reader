@@ -20,6 +20,8 @@ const headingFontScaleInput = document.getElementById("headingFontScale");
 const rainbowHeadingColorsInput = document.getElementById("rainbowHeadingColors");
 const enableBlockDragInput = document.getElementById("enableBlockDrag");
 const autoOpenReaderModeInput = document.getElementById("autoOpenReaderMode");
+const readerStyleButton = document.getElementById("readerStyleButton");
+const tocPositionButton = document.getElementById("tocPositionButton");
 let activeCitation = null;
 let citeRefSerial = 0;
 let citeFlashEndTimer = null;
@@ -40,6 +42,83 @@ let citeHoverHideTimer = null;
 let citeHoverActiveRef = null;
 let citeHoverPointerInPopover = false;
 let hasRenderedDocument = false;
+let pendingAnnotationSelection = null;
+let annotationAction = null;
+let annotationDialog = null;
+let annotationToastTimer = null;
+let renderedAnnotations = [];
+let annotationPositionFrame = null;
+let lastAnnotationNormalizationKey = "";
+let readerStyleDialog = null;
+let readerStyleDialogOriginal = null;
+let readerStyleFilePath = "";
+let tocPositionDialog = null;
+let tocPosition = { x: -28, y: 0 };
+
+const READER_STYLE_DEFAULTS = Object.freeze({
+  bodyFontSize: 16,
+  lineHeight: 1.5,
+  contentWidth: 700,
+  tocFontSize: 13,
+  paragraphSpacing: 16,
+  listItemSpacing: 4.8,
+  flatHeadingSize: 23,
+  h1Size: 28,
+  h2Size: 24,
+  h3Size: 21,
+  h4Size: 18,
+  h5Size: 16,
+  h6Size: 15,
+  h1MarginTop: 0,
+  h2MarginTop: 38,
+  h3MarginTop: 32,
+  h4MarginTop: 28,
+  h5MarginTop: 24,
+  h6MarginTop: 24,
+  h1MarginBottom: 24,
+  headingMarginBottom: 12
+});
+
+const READER_STYLE_GROUPS = [
+  {
+    title: "正文",
+    fields: [
+      { key: "bodyFontSize", label: "正文字号", unit: "px", min: 12, max: 24, step: 0.5 },
+      { key: "lineHeight", label: "正文行高", unit: "倍", min: 1.2, max: 2, step: 0.05 },
+      { key: "contentWidth", label: "每行最大宽度", unit: "px", min: 480, max: 1200, step: 10 },
+      { key: "tocFontSize", label: "目录字号", unit: "px", min: 10, max: 20, step: 0.5 },
+      { key: "paragraphSpacing", label: "段落间距", unit: "px", min: 0, max: 32, step: 1 },
+      { key: "listItemSpacing", label: "列表项间距", unit: "px", min: 0, max: 20, step: 1 }
+    ]
+  },
+  {
+    title: "标题字号",
+    fields: [
+      { key: "h1Size", label: "H1", unit: "px", min: 18, max: 48, step: 1 },
+      { key: "h2Size", label: "H2", unit: "px", min: 16, max: 40, step: 1 },
+      { key: "h3Size", label: "H3", unit: "px", min: 14, max: 36, step: 1 },
+      { key: "h4Size", label: "H4", unit: "px", min: 13, max: 32, step: 1 },
+      { key: "h5Size", label: "H5", unit: "px", min: 12, max: 28, step: 1 },
+      { key: "h6Size", label: "H6", unit: "px", min: 12, max: 28, step: 1 },
+      { key: "flatHeadingSize", label: "关闭逐级缩小时", unit: "px", min: 14, max: 36, step: 1 }
+    ]
+  },
+  {
+    title: "标题间距",
+    fields: [
+      { key: "h1MarginTop", label: "H1 段前", unit: "px", min: 0, max: 80, step: 1 },
+      { key: "h2MarginTop", label: "H2 段前", unit: "px", min: 0, max: 80, step: 1 },
+      { key: "h3MarginTop", label: "H3 段前", unit: "px", min: 0, max: 80, step: 1 },
+      { key: "h4MarginTop", label: "H4 段前", unit: "px", min: 0, max: 80, step: 1 },
+      { key: "h5MarginTop", label: "H5 段前", unit: "px", min: 0, max: 80, step: 1 },
+      { key: "h6MarginTop", label: "H6 段前", unit: "px", min: 0, max: 80, step: 1 },
+      { key: "h1MarginBottom", label: "H1 段后", unit: "px", min: 0, max: 48, step: 1 },
+      { key: "headingMarginBottom", label: "H2–H6 段后", unit: "px", min: 0, max: 48, step: 1 }
+    ]
+  }
+];
+const READER_STYLE_FIELDS = READER_STYLE_GROUPS.flatMap((group) => group.fields);
+let readerStyleSettings = { ...READER_STYLE_DEFAULTS };
 
 const SETTINGS_KEYS = {
   fontScale: "meowReportMarkdown.fontScale",
@@ -114,6 +193,48 @@ window.addEventListener("message", (event) => {
     if (message?.payload) {
       renderReport(message.payload);
     }
+  }
+  if (message?.type === "annotationSaved") {
+    closeAnnotationDialog();
+    showAnnotationToast("批注已保存到当前 Markdown");
+  }
+  if (message?.type === "annotationUpdated") {
+    closeAnnotationDialog();
+    showAnnotationToast("批注已更新");
+  }
+  if (message?.type === "annotationDeleted") {
+    closeAnnotationDialog();
+    showAnnotationToast("批注已删除");
+  }
+  if (message?.type === "annotationsNormalized") {
+    showAnnotationToast("已将批注整理到 Markdown 文末");
+  }
+  if (message?.type === "annotationError") {
+    annotationDialog?.querySelectorAll("button, textarea").forEach((element) => element.disabled = false);
+    annotationDialog?.querySelector("textarea")?.focus();
+    annotationDock?.querySelectorAll(".annotation-card-actions button").forEach((element) => element.disabled = false);
+    showAnnotationToast(`批注保存失败：${message.message || "未知错误"}`, true);
+  }
+  if (message?.type === "readerStyleSettings") {
+    readerStyleSettings = normalizeReaderStyleSettings(message.settings);
+    readerStyleFilePath = String(message.filePath || "");
+    applyReaderStyleSettings();
+    if (readerStyleDialog) {
+      readerStyleDialogOriginal = { ...readerStyleSettings };
+      fillReaderStyleDialog(readerStyleDialog, readerStyleSettings);
+      updateReaderStyleFilePath();
+    }
+  }
+  if (message?.type === "readerStyleSaved") {
+    readerStyleSettings = normalizeReaderStyleSettings(message.settings);
+    readerStyleFilePath = String(message.filePath || readerStyleFilePath);
+    applyReaderStyleSettings();
+    closeReaderStyleDialog({ restore: false });
+    showAnnotationToast("阅读样式已保存到本地配置文件");
+  }
+  if (message?.type === "readerStyleError") {
+    readerStyleDialog?.querySelectorAll("button, input").forEach((element) => element.disabled = false);
+    showAnnotationToast(`阅读样式处理失败：${message.message || "未知错误"}`, true);
   }
 });
 
@@ -241,6 +362,280 @@ function initReaderSettings() {
   document.getElementById("reloadDocumentBtn")?.addEventListener("click", () => {
     requestDocumentReload();
   });
+  readerStyleButton?.addEventListener("click", () => {
+    setReaderSettingsOpen(false);
+    vscode?.postMessage({ type: "requestReaderStyle" });
+    openReaderStyleDialog();
+  });
+  tocPositionButton?.addEventListener("click", () => {
+    setReaderSettingsOpen(false);
+    openTocPositionDialog();
+  });
+}
+
+function normalizeReaderStyleSettings(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const normalized = {};
+  for (const field of READER_STYLE_FIELDS) {
+    const candidate = Number(source[field.key]);
+    const fallback = READER_STYLE_DEFAULTS[field.key];
+    const bounded = Number.isFinite(candidate) ? Math.min(field.max, Math.max(field.min, candidate)) : fallback;
+    const precision = String(field.step).includes(".") ? String(field.step).split(".")[1].length : 0;
+    normalized[field.key] = Number(bounded.toFixed(precision));
+  }
+  return normalized;
+}
+
+function applyReaderStyleSettings() {
+  const root = document.documentElement.style;
+  const pxVariables = {
+    "--reader-font-size": readerStyleSettings.bodyFontSize,
+    "--readable-line-width": readerStyleSettings.contentWidth,
+    "--toc-font-size": readerStyleSettings.tocFontSize,
+    "--paragraph-spacing": readerStyleSettings.paragraphSpacing,
+    "--list-item-spacing": readerStyleSettings.listItemSpacing,
+    "--flat-heading-size": readerStyleSettings.flatHeadingSize,
+    "--h1-size": readerStyleSettings.h1Size,
+    "--h2-size": readerStyleSettings.h2Size,
+    "--h3-size": readerStyleSettings.h3Size,
+    "--h4-size": readerStyleSettings.h4Size,
+    "--h5-size": readerStyleSettings.h5Size,
+    "--h6-size": readerStyleSettings.h6Size,
+    "--h1-margin-top": readerStyleSettings.h1MarginTop,
+    "--h2-margin-top": readerStyleSettings.h2MarginTop,
+    "--h3-margin-top": readerStyleSettings.h3MarginTop,
+    "--h4-margin-top": readerStyleSettings.h4MarginTop,
+    "--h5-margin-top": readerStyleSettings.h5MarginTop,
+    "--h6-margin-top": readerStyleSettings.h6MarginTop,
+    "--h1-margin-bottom": readerStyleSettings.h1MarginBottom,
+    "--heading-margin-bottom": readerStyleSettings.headingMarginBottom
+  };
+  for (const [name, value] of Object.entries(pxVariables)) {
+    root.setProperty(name, `${value}px`);
+  }
+  root.setProperty("--reader-line-height", String(readerStyleSettings.lineHeight));
+}
+
+function openReaderStyleDialog() {
+  if (readerStyleDialog) {
+    return;
+  }
+  readerStyleDialogOriginal = { ...readerStyleSettings };
+  const overlay = document.createElement("div");
+  overlay.className = "reader-style-dialog";
+
+  const card = document.createElement("div");
+  card.className = "reader-style-card";
+  card.setAttribute("role", "dialog");
+  card.setAttribute("aria-modal", "false");
+  card.setAttribute("aria-labelledby", "readerStyleDialogTitle");
+  card.innerHTML = `
+    <div class="reader-style-header">
+      <div>
+        <h2 id="readerStyleDialogTitle">自定义阅读样式</h2>
+        <p>输入时实时预览，保存后写入本地 JSON 配置。</p>
+      </div>
+      <button type="button" class="reader-style-close" data-action="cancel" aria-label="关闭">×</button>
+    </div>
+    <div class="reader-style-file"><span>配置文件</span><code></code></div>
+    <div class="reader-style-groups"></div>
+    <div class="reader-style-actions">
+      <button type="button" data-action="reset">恢复默认值</button>
+      <span class="reader-style-actions-spacer"></span>
+      <button type="button" data-action="cancel">取消</button>
+      <button type="button" class="primary" data-action="save">保存到本地</button>
+    </div>`;
+
+  const groupsRoot = card.querySelector(".reader-style-groups");
+  for (const group of READER_STYLE_GROUPS) {
+    const section = document.createElement("section");
+    section.className = "reader-style-group";
+    const title = document.createElement("h3");
+    title.textContent = group.title;
+    const grid = document.createElement("div");
+    grid.className = "reader-style-grid";
+    for (const field of group.fields) {
+      const label = document.createElement("label");
+      label.className = "reader-style-field";
+      const labelText = document.createElement("span");
+      labelText.textContent = field.label;
+      const inputWrap = document.createElement("span");
+      inputWrap.className = "reader-style-input-wrap";
+      const input = document.createElement("input");
+      input.type = "number";
+      input.dataset.styleKey = field.key;
+      input.min = String(field.min);
+      input.max = String(field.max);
+      input.step = String(field.step);
+      input.value = String(readerStyleSettings[field.key]);
+      inputWrap.append(input, document.createTextNode(field.unit));
+      label.append(labelText, inputWrap);
+      grid.appendChild(label);
+    }
+    section.append(title, grid);
+    groupsRoot.appendChild(section);
+  }
+
+  card.addEventListener("input", (event) => {
+    if (!event.target.matches("input[data-style-key]")) {
+      return;
+    }
+    readerStyleSettings = readReaderStyleDialog(card);
+    applyReaderStyleSettings();
+  });
+  card.addEventListener("click", (event) => {
+    const action = event.target.closest("button")?.dataset.action;
+    if (action === "cancel") {
+      closeReaderStyleDialog({ restore: true });
+    } else if (action === "reset") {
+      readerStyleSettings = { ...READER_STYLE_DEFAULTS };
+      fillReaderStyleDialog(card, readerStyleSettings);
+      applyReaderStyleSettings();
+    } else if (action === "save") {
+      readerStyleSettings = readReaderStyleDialog(card);
+      applyReaderStyleSettings();
+      card.querySelectorAll("button, input").forEach((element) => element.disabled = true);
+      vscode?.postMessage({ type: "saveReaderStyle", settings: readerStyleSettings });
+    }
+  });
+  overlay.addEventListener("mousedown", (event) => {
+    if (event.target === overlay) closeReaderStyleDialog({ restore: true });
+  });
+  overlay.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeReaderStyleDialog({ restore: true });
+  });
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+  readerStyleDialog = overlay;
+  updateReaderStyleFilePath();
+  window.requestAnimationFrame(() => card.querySelector("input")?.focus());
+}
+
+function readReaderStyleDialog(root) {
+  const value = { ...readerStyleSettings };
+  root.querySelectorAll("input[data-style-key]").forEach((input) => {
+    if (!input.value.trim()) {
+      return;
+    }
+    value[input.dataset.styleKey] = Number(input.value);
+  });
+  return normalizeReaderStyleSettings(value);
+}
+
+function fillReaderStyleDialog(root, value) {
+  root.querySelectorAll("input[data-style-key]").forEach((input) => {
+    input.value = String(value[input.dataset.styleKey]);
+  });
+}
+
+function updateReaderStyleFilePath() {
+  const code = readerStyleDialog?.querySelector(".reader-style-file code");
+  if (code) {
+    const label = readerStyleFilePath || "保存后创建 reader-style.json";
+    code.textContent = label;
+    code.title = label;
+  }
+}
+
+function closeReaderStyleDialog({ restore = false } = {}) {
+  if (restore && readerStyleDialogOriginal) {
+    readerStyleSettings = { ...readerStyleDialogOriginal };
+    applyReaderStyleSettings();
+  }
+  readerStyleDialog?.remove();
+  readerStyleDialog = null;
+  readerStyleDialogOriginal = null;
+}
+
+function clampTocOffset(value, min, max) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, Math.round(number))) : 0;
+}
+
+function loadTocPosition() {
+  const savedX = localStorage.getItem(SETTINGS_KEYS.tocOffsetX);
+  const savedY = localStorage.getItem(SETTINGS_KEYS.tocOffsetY);
+  tocPosition = {
+    x: savedX === null ? -28 : clampTocOffset(savedX, -180, 180),
+    y: savedY === null ? 0 : clampTocOffset(savedY, -260, 260)
+  };
+}
+
+function applyTocPosition() {
+  document.documentElement.style.setProperty("--toc-offset-x", `${tocPosition.x}px`);
+  document.documentElement.style.setProperty("--toc-offset-y", `${tocPosition.y}px`);
+}
+
+function openTocPositionDialog() {
+  if (tocPositionDialog) return;
+  const original = { ...tocPosition };
+  const overlay = document.createElement("div");
+  overlay.className = "toc-position-dialog";
+  overlay.innerHTML = `
+    <div class="toc-position-card" role="dialog" aria-modal="true" aria-labelledby="tocPositionTitle">
+      <h2 id="tocPositionTitle">目录位置</h2>
+      <label class="toc-position-field">
+        <span>水平偏移 <output data-output="x"></output></span>
+        <input type="range" min="-180" max="180" step="1" data-axis="x" />
+      </label>
+      <label class="toc-position-field">
+        <span>垂直偏移 <output data-output="y"></output></span>
+        <input type="range" min="-260" max="260" step="1" data-axis="y" />
+      </label>
+      <p class="toc-position-hint">以空白区域中心为基准，拖动时实时预览。</p>
+      <div class="toc-position-actions">
+        <button type="button" data-action="reset">恢复默认</button>
+        <span></span>
+        <button type="button" data-action="cancel">取消</button>
+        <button type="button" class="primary" data-action="save">保存</button>
+      </div>
+    </div>`;
+  const sync = () => {
+    for (const axis of ["x", "y"]) {
+      overlay.querySelector(`[data-axis="${axis}"]`).value = String(tocPosition[axis]);
+      overlay.querySelector(`[data-output="${axis}"]`).textContent = `${tocPosition[axis]} px`;
+    }
+    applyTocPosition();
+  };
+  overlay.addEventListener("input", (event) => {
+    const axis = event.target.dataset.axis;
+    if (!axis) return;
+    tocPosition[axis] = clampTocOffset(event.target.value, axis === "x" ? -180 : -260, axis === "x" ? 180 : 260);
+    sync();
+  });
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay || event.target.closest('[data-action="cancel"]')) {
+      tocPosition = original;
+      applyTocPosition();
+      closeTocPositionDialog();
+      return;
+    }
+    const action = event.target.closest("button")?.dataset.action;
+    if (action === "reset") {
+      tocPosition = { x: -28, y: 0 };
+      sync();
+    } else if (action === "save") {
+      localStorage.setItem(SETTINGS_KEYS.tocOffsetX, String(tocPosition.x));
+      localStorage.setItem(SETTINGS_KEYS.tocOffsetY, String(tocPosition.y));
+      closeTocPositionDialog();
+    }
+  });
+  overlay.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      tocPosition = original;
+      applyTocPosition();
+      closeTocPositionDialog();
+    }
+  });
+  document.body.appendChild(overlay);
+  tocPositionDialog = overlay;
+  sync();
+  window.requestAnimationFrame(() => overlay.querySelector('input[data-axis="x"]')?.focus());
+}
+
+function closeTocPositionDialog() {
+  tocPositionDialog?.remove();
+  tocPositionDialog = null;
 }
 
 function applyExtensionSettings(settings) {
