@@ -6,6 +6,10 @@ const tocToggle = document.getElementById("tocToggle");
 const tocSideToggle = document.getElementById("tocSideToggle");
 const toc = document.getElementById("toc");
 const annotationDock = document.getElementById("annotationDock");
+const annotationNavigationRoot = document.getElementById("annotationNavigationRoot");
+const openAnnotationCount = document.getElementById("openAnnotationCount");
+const previousAnnotationButton = document.getElementById("previousAnnotationButton");
+const nextAnnotationButton = document.getElementById("nextAnnotationButton");
 const annotationHistoryRoot = document.getElementById("annotationHistoryRoot");
 const annotationHistoryButton = document.getElementById("annotationHistoryButton");
 const annotationHistoryPanel = document.getElementById("annotationHistoryPanel");
@@ -164,6 +168,7 @@ initEditorMode();
 initBlockDrag();
 initCiteHover();
 initAnnotations();
+initAnnotationNavigation();
 initAnnotationHistory();
 
 window.addEventListener("message", (event) => {
@@ -2307,6 +2312,37 @@ function initAnnotationHistory() {
   });
 }
 
+function initAnnotationNavigation() {
+  previousAnnotationButton?.addEventListener("click", () => navigateOpenAnnotation(-1));
+  nextAnnotationButton?.addEventListener("click", () => navigateOpenAnnotation(1));
+}
+
+function navigateOpenAnnotation(direction) {
+  const annotations = renderedAnnotations
+    .filter((annotation) => annotation.status !== "resolved" && annotation.anchorElement)
+    .sort(compareAnnotationAnchorOrder);
+  if (!annotations.length) return;
+
+  const activeIndex = annotations.findIndex((annotation) => annotation.cardElement?.classList.contains("is-active"));
+  let nextIndex;
+  if (activeIndex >= 0) {
+    nextIndex = (activeIndex + direction + annotations.length) % annotations.length;
+  } else {
+    const referenceLine = getScrollReferenceLine();
+    if (direction > 0) {
+      nextIndex = annotations.findIndex((annotation) => annotation.anchorElement.getBoundingClientRect().bottom >= referenceLine);
+      if (nextIndex < 0) nextIndex = 0;
+    } else {
+      nextIndex = annotations.findLastIndex((annotation) => annotation.anchorElement.getBoundingClientRect().top <= referenceLine);
+      if (nextIndex < 0) nextIndex = annotations.length - 1;
+    }
+  }
+
+  const annotation = annotations[nextIndex];
+  activateAnnotation(annotation, { scrollToAnchor: true });
+  window.setTimeout(() => annotation.cardElement?.focus({ preventScroll: true }), 250);
+}
+
 function getSelectionElement(node) {
   return node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
 }
@@ -2519,6 +2555,38 @@ function normalizeAnnotationMatchText(value) {
   return String(value || "").normalize("NFKC").replace(/\s+/g, "");
 }
 
+function renderAnnotationQuoteLine(line) {
+  let value = String(line || "").trim();
+  if (!value) return "";
+
+  if (/^\|.*\|$/.test(value)) {
+    value = parseTableRow(value).join(" ");
+  } else {
+    value = value
+      .replace(/^(?:>\s*)+/, "")
+      .replace(/^#{1,6}\s+/, "")
+      .replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+)/, "")
+      .replace(/^\[[ xX]\]\s*/, "");
+  }
+
+  const container = document.createElement("span");
+  appendInlineMarkdown(container, value, { disableCitations: true });
+  return container.textContent || "";
+}
+
+function getAnnotationHighlightQuotes(annotation) {
+  const rawQuote = String(annotation?.changeQuote || annotation?.quote || "").trim();
+  if (!rawQuote) return [];
+
+  const visibleLines = rawQuote.split(/\r?\n/).map(renderAnnotationQuoteLine).filter(Boolean);
+  return Array.from(new Set([
+    annotation?.highlightQuote,
+    rawQuote,
+    visibleLines.join(" "),
+    ...visibleLines
+  ].map((quote) => String(quote || "").trim()).filter(Boolean)));
+}
+
 function findAnnotationBranch(section, annotation) {
   const branches = Array.from(section.querySelectorAll(".content-branch"));
   if (annotation.anchor) {
@@ -2535,7 +2603,16 @@ function findAnnotationBranch(section, annotation) {
   }) || null;
 }
 
-function findAnnotationAnchor(annotation, quote = annotation.highlightQuote || annotation.quote) {
+function findMostSpecificAnnotationTarget(root, predicate) {
+  const matches = Array.from(root.querySelectorAll("[data-md-start][data-md-end]"))
+    .filter((block) => !block.classList.contains("content-branch") && predicate(block));
+  return matches.reduce((best, candidate) => {
+    if (!best || best.contains(candidate)) return candidate;
+    return best;
+  }, null);
+}
+
+function findAnnotationAnchor(annotation) {
   const section = document.getElementById(annotation.fileId);
   if (!section) return null;
 
@@ -2543,20 +2620,31 @@ function findAnnotationAnchor(annotation, quote = annotation.highlightQuote || a
   const searchRoot = savedBranch || section;
   const blocks = Array.from(searchRoot.querySelectorAll("[data-md-start][data-md-end]"))
     .filter((block) => !block.classList.contains("content-branch"));
-  const compactQuote = normalizeAnnotationMatchText(quote);
-
-  if (compactQuote) {
-    const quoteTarget = blocks.find((block) => normalizeAnnotationMatchText(block.textContent).includes(compactQuote));
-    if (quoteTarget) return quoteTarget;
-    if (savedBranch) {
-      const documentTarget = Array.from(section.querySelectorAll("[data-md-start][data-md-end]"))
-        .filter((block) => !block.classList.contains("content-branch"))
-        .find((block) => normalizeAnnotationMatchText(block.textContent).includes(compactQuote));
-      if (documentTarget) return documentTarget;
+  for (const quote of getAnnotationHighlightQuotes(annotation)) {
+    const compactQuote = normalizeAnnotationMatchText(quote);
+    if (compactQuote) {
+      const quoteTarget = findMostSpecificAnnotationTarget(
+        searchRoot,
+        (block) => normalizeAnnotationMatchText(block.textContent).includes(compactQuote)
+      );
+      if (quoteTarget) {
+        annotation.highlightQuote = quote;
+        return quoteTarget;
+      }
+      if (savedBranch) {
+        const documentTarget = findMostSpecificAnnotationTarget(
+          section,
+          (block) => normalizeAnnotationMatchText(block.textContent).includes(compactQuote)
+        );
+        if (documentTarget) {
+          annotation.highlightQuote = quote;
+          return documentTarget;
+        }
+      }
     }
   }
 
-  const lineTarget = blocks.find((block) => {
+  const lineTarget = findMostSpecificAnnotationTarget(searchRoot, (block) => {
     const start = Number(block.dataset.mdStart);
     const end = Number(block.dataset.mdEnd);
     return start <= annotation.targetLine && end >= annotation.targetLine;
@@ -2594,8 +2682,18 @@ function getAnnotationTextNodes(anchor) {
 
 function highlightAnnotationQuote(annotation) {
   const anchor = annotation.anchorElement;
-  const highlightQuote = annotation.highlightQuote || annotation.quote;
-  if (!anchor || !highlightQuote) return [];
+  if (!anchor) return [];
+  for (const quote of getAnnotationHighlightQuotes(annotation)) {
+    const highlights = highlightTextInAnnotationAnchor(anchor, quote, annotation.id);
+    if (highlights.length) {
+      annotation.highlightQuote = quote;
+      return highlights;
+    }
+  }
+  return [];
+}
+
+function highlightTextInAnnotationAnchor(anchor, highlightQuote, annotationId) {
   const nodes = getAnnotationTextNodes(anchor);
   const rawText = nodes.map((node) => node.data).join("");
   const segments = new Map();
@@ -2651,7 +2749,7 @@ function highlightAnnotationQuote(annotation) {
     const selected = node.splitText(segment.start);
     const mark = document.createElement("mark");
     mark.className = "annotation-highlight";
-    mark.dataset.annotationId = annotation.id;
+    mark.dataset.annotationId = annotationId;
     selected.replaceWith(mark);
     mark.appendChild(selected);
     highlights.push(mark);
@@ -2691,6 +2789,7 @@ function renderAnnotationDock() {
   const openAnnotations = renderedAnnotations.filter((annotation) => annotation.status !== "resolved");
   annotationDock.hidden = openAnnotations.length === 0;
   renderAnnotationHistory();
+  renderAnnotationNavigation(openAnnotations.length);
   if (!openAnnotations.length) return;
 
   const anchorCounts = new Map();
@@ -2704,6 +2803,10 @@ function renderAnnotationDock() {
 
     const card = document.createElement("article");
     card.className = "annotation-card";
+    const hasAiResponse = Boolean(
+      String(annotation.reply || "").trim() || String(annotation.changeQuote || "").trim()
+    );
+    card.classList.toggle("has-ai-reply", hasAiResponse);
     card.dataset.annotationId = annotation.id;
     card.tabIndex = -1;
     const header = document.createElement("div");
@@ -2725,16 +2828,6 @@ function renderAnnotationDock() {
     body.className = "annotation-card-body";
     appendAnnotationMarkdown(body, annotation.body);
     card.append(header, quote, body);
-    if (annotation.changeQuote) {
-      const change = document.createElement("div");
-      change.className = "annotation-card-change";
-      const changeLabel = document.createElement("strong");
-      changeLabel.textContent = "AI 首处改动";
-      const changeText = document.createElement("div");
-      changeText.textContent = annotation.changeQuote;
-      change.append(changeLabel, changeText);
-      card.appendChild(change);
-    }
     if (annotation.reply) {
       const reply = document.createElement("div");
       reply.className = "annotation-card-reply";
@@ -2802,6 +2895,15 @@ function renderAnnotationDock() {
   scheduleAnnotationPositions();
 }
 
+function renderAnnotationNavigation(openCount) {
+  if (!annotationNavigationRoot || !openAnnotationCount) return;
+  annotationNavigationRoot.hidden = openCount === 0 || document.body.classList.contains("editor-mode");
+  openAnnotationCount.textContent = `未解决批注 ${openCount}`;
+  const navigationDisabled = openCount === 0;
+  if (previousAnnotationButton) previousAnnotationButton.disabled = navigationDisabled;
+  if (nextAnnotationButton) nextAnnotationButton.disabled = navigationDisabled;
+}
+
 function createAnnotationHistoryField(label, text, className = "") {
   const field = document.createElement("div");
   field.className = `annotation-history-field${className ? ` ${className}` : ""}`;
@@ -2816,8 +2918,9 @@ function createAnnotationHistoryField(label, text, className = "") {
 function renderAnnotationHistory() {
   if (!annotationHistoryRoot || !annotationHistoryPanel || !annotationHistoryButton) return;
   const resolved = renderedAnnotations.filter((annotation) => annotation.status === "resolved");
-  annotationHistoryRoot.hidden = resolved.length === 0 || document.body.classList.contains("editor-mode");
-  annotationHistoryButton.textContent = resolved.length ? `批注 ${resolved.length}` : "批注";
+  annotationHistoryRoot.hidden = renderedAnnotations.length === 0 || document.body.classList.contains("editor-mode");
+  annotationHistoryButton.textContent = `已解决批注 ${resolved.length}`;
+  annotationHistoryButton.disabled = resolved.length === 0;
   annotationHistoryPanel.innerHTML = "";
   if (!resolved.length) {
     annotationHistoryPanel.hidden = true;
@@ -4532,8 +4635,11 @@ function renderTable(rows, context = {}) {
   if (hasHeader) {
     const thead = document.createElement("thead");
     const tr = document.createElement("tr");
+    const lineIndex = rows[0].lineIndex ?? -1;
+    tagMdRange(tr, lineIndex, lineIndex);
     for (const cell of getTableRowCells(rows[0])) {
       const th = document.createElement("th");
+      tagMdRange(th, lineIndex, lineIndex);
       appendInlineMarkdown(th, cell, context);
       tr.appendChild(th);
     }
@@ -4548,8 +4654,10 @@ function renderTable(rows, context = {}) {
     const cells = getTableRowCells(row);
     const lineIndex = row.lineIndex ?? -1;
     const tr = document.createElement("tr");
+    tagMdRange(tr, lineIndex, lineIndex);
     for (let cellIndex = 0; cellIndex < cells.length; cellIndex += 1) {
       const td = document.createElement("td");
+      tagMdRange(td, lineIndex, lineIndex);
       appendTableCellContent(td, cells[cellIndex], context, lineIndex, cellIndex);
       tr.appendChild(td);
     }
@@ -4558,6 +4666,12 @@ function renderTable(rows, context = {}) {
   table.appendChild(tbody);
   wrapper.appendChild(table);
   return wrapper;
+}
+
+function tagMdRange(element, startLine, endLine) {
+  if (!element || startLine < 0 || endLine < startLine) return;
+  element.dataset.mdStart = String(startLine);
+  element.dataset.mdEnd = String(endLine);
 }
 
 function appendInlineMarkdown(parent, text, context = {}) {

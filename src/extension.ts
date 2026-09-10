@@ -1093,16 +1093,24 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     ].join("\n");
 
     const currentContent = document.getText();
-    const isFirstAnnotation = !/^\s*<!--\s*mr-annotation:start\s*$/m.test(currentContent);
+    const eol = currentContent.includes("\r\n") ? "\r\n" : "\n";
+    const hasAiGuide = /^[ \t]*<!--\s*mr-annotation:ai-guide\s*$/m.test(currentContent);
+    const firstAnnotationMatch = /^[ \t]*<!--\s*mr-annotation:start\s*$/m.exec(currentContent);
     const aiGuide = [
       "<!-- mr-annotation:ai-guide",
-      "AI 操作指南：处理 status 为 open 的批注。按要求修改正文；在原批注元数据写入 change_quote（修改后第一处可精确匹配的正文，多处只记第一处），并在批注末尾添加 **AI 回复：** 和改动简述。保留批注，不要替用户解决。",
+      "AI 操作指南：处理 status 为 open 的批注。按要求修改正文后，对比修改前后的内容；在原批注元数据写入 change_quote，内容必须摘自本次实际新增或改写后的正文，并选择最能代表本批注解决结果的主要改动。不要按文档出现顺序选择，也不要填写未改动的上下文、原批注选文或顺手调整的次要内容。change_quote 只记录一处，应能在修改后正文中精确匹配，并尽量包含足够上下文以便唯一定位。随后在批注末尾添加 **AI 回复：** 和改动简述。保留批注，不要替用户解决。",
       "-->"
-    ].join("\n");
-    const annotationPayload = isFirstAnnotation ? `${aiGuide}\n\n${entry}` : entry;
+    ].join(eol);
+    const entryForDocument = eol === "\n" ? entry : entry.replace(/\n/g, eol);
     const insertAt = document.positionAt(currentContent.length);
-    const insertion = `${currentContent.endsWith("\n") ? "\n" : "\n\n"}${annotationPayload}\n`;
     const edit = new vscode.WorkspaceEdit();
+    if (!hasAiGuide && firstAnnotationMatch) {
+      edit.insert(document.uri, document.positionAt(firstAnnotationMatch.index), `${aiGuide}${eol}${eol}`);
+    }
+    const annotationPayload = !hasAiGuide && !firstAnnotationMatch
+      ? `${aiGuide}${eol}${eol}${entryForDocument}`
+      : entryForDocument;
+    const insertion = `${currentContent.endsWith("\n") ? eol : `${eol}${eol}`}${annotationPayload}${eol}`;
     edit.insert(document.uri, insertAt, insertion);
     const applied = await vscode.workspace.applyEdit(edit);
     if (!applied) {
@@ -1405,8 +1413,13 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       aria-label="Markdown 编辑器"
     ></textarea>
   </main>
+  <div id="annotationNavigationRoot" class="annotation-navigation-root" hidden aria-label="未解决批注导航">
+    <span id="openAnnotationCount" class="annotation-open-count" aria-live="polite">未解决批注 0</span>
+    <button id="previousAnnotationButton" type="button" class="annotation-navigation-button" title="跳转到上一个未解决批注" aria-label="跳转到上一个未解决批注">上一条</button>
+    <button id="nextAnnotationButton" type="button" class="annotation-navigation-button" title="跳转到下一个未解决批注" aria-label="跳转到下一个未解决批注">下一条</button>
+  </div>
   <div id="annotationHistoryRoot" class="annotation-history-root" hidden>
-    <button id="annotationHistoryButton" type="button" class="editor-mode-btn annotation-history-button" aria-expanded="false" aria-controls="annotationHistoryPanel">批注</button>
+    <button id="annotationHistoryButton" type="button" class="editor-mode-btn annotation-history-button" aria-expanded="false" aria-controls="annotationHistoryPanel">已解决批注 0</button>
     <section id="annotationHistoryPanel" class="annotation-history-panel" hidden aria-label="已完成批注"></section>
   </div>
   <div class="editor-mode-root">
