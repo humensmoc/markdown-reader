@@ -6,6 +6,9 @@ const tocToggle = document.getElementById("tocToggle");
 const tocSideToggle = document.getElementById("tocSideToggle");
 const toc = document.getElementById("toc");
 const annotationDock = document.getElementById("annotationDock");
+const annotationHistoryRoot = document.getElementById("annotationHistoryRoot");
+const annotationHistoryButton = document.getElementById("annotationHistoryButton");
+const annotationHistoryPanel = document.getElementById("annotationHistoryPanel");
 const reportContent = document.getElementById("reportContent");
 const reportEditor = document.getElementById("reportEditor");
 const editorModeToggle = document.getElementById("editorModeToggle");
@@ -161,6 +164,7 @@ initEditorMode();
 initBlockDrag();
 initCiteHover();
 initAnnotations();
+initAnnotationHistory();
 
 window.addEventListener("message", (event) => {
   const message = event.data;
@@ -207,6 +211,10 @@ window.addEventListener("message", (event) => {
     closeAnnotationDialog();
     showAnnotationToast("批注已更新");
   }
+  if (message?.type === "annotationResolved") {
+    closeAnnotationDialog();
+    showAnnotationToast("批注已解决并归档");
+  }
   if (message?.type === "annotationDeleted") {
     closeAnnotationDialog();
     showAnnotationToast("批注已删除");
@@ -217,7 +225,7 @@ window.addEventListener("message", (event) => {
   if (message?.type === "annotationError") {
     annotationDialog?.querySelectorAll("button, textarea").forEach((element) => element.disabled = false);
     annotationDialog?.querySelector("textarea")?.focus();
-    annotationDock?.querySelectorAll(".annotation-card-actions button").forEach((element) => element.disabled = false);
+    annotationDock?.querySelectorAll(".annotation-card button").forEach((element) => element.disabled = false);
     showAnnotationToast(`批注保存失败：${message.message || "未知错误"}`, true);
   }
   if (message?.type === "readerStyleSettings") {
@@ -2283,6 +2291,20 @@ function initAnnotations() {
   });
 }
 
+function initAnnotationHistory() {
+  annotationHistoryButton?.addEventListener("click", () => {
+    const open = annotationHistoryPanel?.hidden !== false;
+    if (annotationHistoryPanel) annotationHistoryPanel.hidden = !open;
+    annotationHistoryButton.setAttribute("aria-expanded", String(open));
+  });
+
+  document.addEventListener("click", (event) => {
+    if (annotationHistoryPanel?.hidden !== false || annotationHistoryRoot?.contains(event.target)) return;
+    annotationHistoryPanel.hidden = true;
+    annotationHistoryButton?.setAttribute("aria-expanded", "false");
+  });
+}
+
 function getSelectionElement(node) {
   return node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
 }
@@ -2367,13 +2389,24 @@ function hideAnnotationAction() {
   }
 }
 
+function positionAnnotationComposeDialog(overlay, info, annotation) {
+  const placeOnLeft = annotationDock?.classList.contains("annotation-left");
+  overlay.classList.toggle("annotation-left", Boolean(placeOnLeft));
+  overlay.classList.toggle("annotation-right", !placeOnLeft);
+  const referenceRect = annotation?.anchorElement?.getBoundingClientRect() || info?.rect;
+  const card = overlay.querySelector(".annotation-dialog-card");
+  const desiredTop = referenceRect?.top ?? 16;
+  const maxTop = Math.max(10, window.innerHeight - (card?.offsetHeight || 0) - 10);
+  overlay.style.top = `${Math.round(Math.min(maxTop, Math.max(10, desiredTop)))}px`;
+}
+
 function openAnnotationDialog(info, annotation = null) {
   hideAnnotationAction();
   const editing = Boolean(annotation);
   const overlay = document.createElement("div");
-  overlay.className = "annotation-dialog";
+  overlay.className = "annotation-dialog annotation-compose-dialog";
   overlay.innerHTML = `
-    <div class="annotation-dialog-card" role="dialog" aria-modal="true" aria-labelledby="annotationDialogTitle">
+    <div class="annotation-dialog-card" role="dialog" aria-modal="false" aria-labelledby="annotationDialogTitle">
       <h2 id="annotationDialogTitle">${editing ? "编辑批注" : "添加批注"}</h2>
       <div class="annotation-quote"></div>
       <label for="annotationComment">批注内容</label>
@@ -2384,13 +2417,14 @@ function openAnnotationDialog(info, annotation = null) {
       </div>
     </div>`;
   overlay.querySelector(".annotation-quote").textContent = editing ? annotation.quote : info.selectedText;
-  overlay.querySelector("textarea").value = editing ? annotation.body : "";
+  const textarea = overlay.querySelector("textarea");
+  const saveButton = overlay.querySelector('[data-action="save"]');
+  textarea.value = editing ? annotation.body : "";
   overlay.querySelector('[data-action="cancel"]').addEventListener("click", closeAnnotationDialog);
   overlay.addEventListener("mousedown", (event) => {
     if (event.target === overlay) closeAnnotationDialog();
   });
-  overlay.querySelector('[data-action="save"]').addEventListener("click", () => {
-    const textarea = overlay.querySelector("textarea");
+  saveButton.addEventListener("click", () => {
     const comment = textarea.value.trim();
     if (!comment) {
       textarea.focus();
@@ -2411,12 +2445,55 @@ function openAnnotationDialog(info, annotation = null) {
     }
     overlay.querySelectorAll("button, textarea").forEach((element) => element.disabled = true);
   });
+  textarea.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.shiftKey || event.isComposing || event.keyCode === 229) {
+      return;
+    }
+    event.preventDefault();
+    saveButton.click();
+  });
   overlay.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closeAnnotationDialog();
   });
   document.body.appendChild(overlay);
   annotationDialog = overlay;
-  window.requestAnimationFrame(() => overlay.querySelector("textarea")?.focus());
+  window.requestAnimationFrame(() => {
+    positionAnnotationComposeDialog(overlay, info, annotation);
+    textarea.focus();
+  });
+}
+
+function openAnnotationDeleteDialog(annotation) {
+  closeAnnotationDialog();
+  const overlay = document.createElement("div");
+  overlay.className = "annotation-dialog";
+  overlay.innerHTML = `
+    <div class="annotation-dialog-card" role="dialog" aria-modal="true" aria-labelledby="annotationDeleteDialogTitle">
+      <h2 id="annotationDeleteDialogTitle">删除批注</h2>
+      <div class="annotation-quote"></div>
+      <p class="annotation-delete-hint">删除后会同时更新并保存当前 Markdown 文件。</p>
+      <div class="annotation-dialog-actions">
+        <button type="button" data-action="cancel">取消</button>
+        <button type="button" class="danger" data-action="delete">确认删除</button>
+      </div>
+    </div>`;
+  overlay.querySelector(".annotation-quote").textContent = annotation.quote;
+  const cancelButton = overlay.querySelector('[data-action="cancel"]');
+  const deleteButton = overlay.querySelector('[data-action="delete"]');
+  cancelButton.addEventListener("click", closeAnnotationDialog);
+  deleteButton.addEventListener("click", () => {
+    overlay.querySelectorAll("button").forEach((button) => button.disabled = true);
+    vscode?.postMessage({ type: "deleteAnnotation", annotationId: annotation.id });
+  });
+  overlay.addEventListener("mousedown", (event) => {
+    if (event.target === overlay) closeAnnotationDialog();
+  });
+  overlay.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeAnnotationDialog();
+  });
+  document.body.appendChild(overlay);
+  annotationDialog = overlay;
+  window.requestAnimationFrame(() => cancelButton.focus());
 }
 
 function closeAnnotationDialog() {
@@ -2456,7 +2533,7 @@ function findAnnotationBranch(section, annotation) {
   }) || null;
 }
 
-function findAnnotationAnchor(annotation) {
+function findAnnotationAnchor(annotation, quote = annotation.highlightQuote || annotation.quote) {
   const section = document.getElementById(annotation.fileId);
   if (!section) return null;
 
@@ -2464,11 +2541,17 @@ function findAnnotationAnchor(annotation) {
   const searchRoot = savedBranch || section;
   const blocks = Array.from(searchRoot.querySelectorAll("[data-md-start][data-md-end]"))
     .filter((block) => !block.classList.contains("content-branch"));
-  const compactQuote = normalizeAnnotationMatchText(annotation.quote);
+  const compactQuote = normalizeAnnotationMatchText(quote);
 
   if (compactQuote) {
     const quoteTarget = blocks.find((block) => normalizeAnnotationMatchText(block.textContent).includes(compactQuote));
     if (quoteTarget) return quoteTarget;
+    if (savedBranch) {
+      const documentTarget = Array.from(section.querySelectorAll("[data-md-start][data-md-end]"))
+        .filter((block) => !block.classList.contains("content-branch"))
+        .find((block) => normalizeAnnotationMatchText(block.textContent).includes(compactQuote));
+      if (documentTarget) return documentTarget;
+    }
   }
 
   const lineTarget = blocks.find((block) => {
@@ -2509,13 +2592,14 @@ function getAnnotationTextNodes(anchor) {
 
 function highlightAnnotationQuote(annotation) {
   const anchor = annotation.anchorElement;
-  if (!anchor || !annotation.quote) return [];
+  const highlightQuote = annotation.highlightQuote || annotation.quote;
+  if (!anchor || !highlightQuote) return [];
   const nodes = getAnnotationTextNodes(anchor);
   const rawText = nodes.map((node) => node.data).join("");
   const segments = new Map();
-  const exactStart = rawText.indexOf(annotation.quote);
+  const exactStart = rawText.indexOf(highlightQuote);
   if (exactStart >= 0) {
-    const exactEnd = exactStart + annotation.quote.length;
+    const exactEnd = exactStart + highlightQuote.length;
     let cursor = 0;
     for (const node of nodes) {
       const nodeStart = cursor;
@@ -2544,7 +2628,7 @@ function highlightAnnotationQuote(annotation) {
         }
       }
     });
-    const normalizedQuote = annotation.quote.replace(/\s+/g, " ").trim();
+    const normalizedQuote = highlightQuote.replace(/\s+/g, " ").trim();
     const normalizedStart = normalized.indexOf(normalizedQuote);
     if (normalizedStart < 0) return [];
     for (const position of positions.slice(normalizedStart, normalizedStart + normalizedQuote.length)) {
@@ -2589,11 +2673,13 @@ function activateAnnotation(annotation, { scrollToAnchor = false } = {}) {
 function renderAnnotationDock() {
   if (!annotationDock) return;
   annotationDock.innerHTML = "";
-  annotationDock.hidden = renderedAnnotations.length === 0;
-  if (!renderedAnnotations.length) return;
+  const openAnnotations = renderedAnnotations.filter((annotation) => annotation.status !== "resolved");
+  annotationDock.hidden = openAnnotations.length === 0;
+  renderAnnotationHistory();
+  if (!openAnnotations.length) return;
 
   const anchorCounts = new Map();
-  for (const annotation of renderedAnnotations) {
+  for (const annotation of openAnnotations) {
     const anchor = findAnnotationAnchor(annotation);
     annotation.anchorElement = anchor;
 
@@ -2620,6 +2706,30 @@ function renderAnnotationDock() {
     body.className = "annotation-card-body";
     appendAnnotationMarkdown(body, annotation.body);
     card.append(header, quote, body);
+    if (annotation.changeQuote) {
+      const change = document.createElement("div");
+      change.className = "annotation-card-change";
+      const changeLabel = document.createElement("strong");
+      changeLabel.textContent = "AI 首处改动";
+      const changeText = document.createElement("div");
+      changeText.textContent = annotation.changeQuote;
+      change.append(changeLabel, changeText);
+      card.appendChild(change);
+    }
+    if (annotation.reply) {
+      const reply = document.createElement("div");
+      reply.className = "annotation-card-reply";
+      const replyLabel = document.createElement("strong");
+      replyLabel.textContent = "AI 回复";
+      reply.appendChild(replyLabel);
+      appendAnnotationMarkdown(reply, annotation.reply);
+      card.appendChild(reply);
+    }
+    const resolveButton = document.createElement("button");
+    resolveButton.type = "button";
+    resolveButton.className = "annotation-resolve-button";
+    resolveButton.textContent = "解决";
+    card.appendChild(resolveButton);
     annotationDock.appendChild(card);
     annotation.cardElement = card;
     annotation.highlightElements = highlightAnnotationQuote(annotation);
@@ -2632,9 +2742,12 @@ function renderAnnotationDock() {
     deleteButton.addEventListener("click", (event) => {
       event.stopPropagation();
       activateAnnotation(annotation);
-      if (!window.confirm("确定删除这条批注吗？此操作会修改当前 Markdown。")) return;
+      openAnnotationDeleteDialog(annotation);
+    });
+    resolveButton.addEventListener("click", (event) => {
+      event.stopPropagation();
       card.querySelectorAll("button").forEach((button) => button.disabled = true);
-      vscode?.postMessage({ type: "deleteAnnotation", annotationId: annotation.id });
+      vscode?.postMessage({ type: "resolveAnnotation", annotationId: annotation.id });
     });
 
     if (anchor && anchor !== document.getElementById(annotation.fileId)) {
@@ -2651,7 +2764,7 @@ function renderAnnotationDock() {
       marker.className = "annotation-marker";
       marker.contentEditable = "false";
       marker.addEventListener("click", () => {
-        const items = renderedAnnotations.filter((item) => item.anchorElement === anchor);
+        const items = openAnnotations.filter((item) => item.anchorElement === anchor);
         const activeIndex = items.findIndex((item) => item.cardElement?.classList.contains("is-active"));
         const annotation = items[(activeIndex + 1) % items.length];
         if (!annotation) return;
@@ -2663,11 +2776,69 @@ function renderAnnotationDock() {
     marker.textContent = "";
     marker.dataset.label = count > 1 ? `批注 ${count}` : "批注";
     marker.title = count > 1 ? `${count} 条批注` : "查看批注";
-    for (const annotation of renderedAnnotations.filter((item) => item.anchorElement === anchor)) {
+    for (const annotation of openAnnotations.filter((item) => item.anchorElement === anchor)) {
       annotation.markerElement = marker;
     }
   }
   scheduleAnnotationPositions();
+}
+
+function createAnnotationHistoryField(label, text, className = "") {
+  const field = document.createElement("div");
+  field.className = `annotation-history-field${className ? ` ${className}` : ""}`;
+  const title = document.createElement("strong");
+  title.textContent = label;
+  const value = document.createElement("div");
+  value.textContent = text || "未记录";
+  field.append(title, value);
+  return field;
+}
+
+function renderAnnotationHistory() {
+  if (!annotationHistoryRoot || !annotationHistoryPanel || !annotationHistoryButton) return;
+  const resolved = renderedAnnotations.filter((annotation) => annotation.status === "resolved");
+  annotationHistoryRoot.hidden = resolved.length === 0 || document.body.classList.contains("editor-mode");
+  annotationHistoryButton.textContent = resolved.length ? `批注 ${resolved.length}` : "批注";
+  annotationHistoryPanel.innerHTML = "";
+  if (!resolved.length) {
+    annotationHistoryPanel.hidden = true;
+    annotationHistoryButton.setAttribute("aria-expanded", "false");
+    return;
+  }
+
+  const header = document.createElement("header");
+  const title = document.createElement("h2");
+  title.textContent = "已完成批注";
+  const closeButton = document.createElement("button");
+  closeButton.type = "button";
+  closeButton.textContent = "关闭";
+  closeButton.addEventListener("click", () => {
+    annotationHistoryPanel.hidden = true;
+    annotationHistoryButton.setAttribute("aria-expanded", "false");
+  });
+  header.append(title, closeButton);
+  annotationHistoryPanel.appendChild(header);
+
+  const list = document.createElement("div");
+  list.className = "annotation-history-list";
+  for (const annotation of [...resolved].reverse()) {
+    const item = document.createElement("article");
+    item.className = "annotation-history-item";
+    item.append(
+      createAnnotationHistoryField("批注问题", annotation.body),
+      createAnnotationHistoryField("原选中内容", annotation.quote, "is-original"),
+      createAnnotationHistoryField("AI 改动位置", annotation.changeQuote, "is-change"),
+      createAnnotationHistoryField("AI 回复", annotation.reply, "is-reply")
+    );
+    if (annotation.resolvedAt) {
+      const time = document.createElement("time");
+      time.dateTime = annotation.resolvedAt;
+      time.textContent = `解决于 ${new Date(annotation.resolvedAt).toLocaleString()}`;
+      item.appendChild(time);
+    }
+    list.appendChild(item);
+  }
+  annotationHistoryPanel.appendChild(list);
 }
 
 function requestAnnotationNormalization() {
@@ -2723,7 +2894,7 @@ function parseAnnotationMeta(lines) {
   return meta;
 }
 
-function extractAnnotationBody(lines) {
+function extractAnnotationContent(lines) {
   const quoteLines = lines
     .filter((line) => !/^\s*<!--/.test(line))
     .map((line) => String(line || "").replace(/^\s*>\s?/, ""));
@@ -2732,7 +2903,188 @@ function extractAnnotationBody(lines) {
   }
   while (quoteLines[0] === "") quoteLines.shift();
   while (quoteLines.at(-1) === "") quoteLines.pop();
-  return quoteLines.join("\n");
+  const replyIndex = quoteLines.findIndex((line) => /^\*\*AI\s*回复[：:]?\*\*$/.test(line.trim()));
+  if (replyIndex < 0) return { body: quoteLines.join("\n"), reply: "" };
+  const bodyLines = quoteLines.slice(0, replyIndex);
+  const replyLines = quoteLines.slice(replyIndex + 1);
+  while (bodyLines.at(-1) === "") bodyLines.pop();
+  while (replyLines[0] === "") replyLines.shift();
+  return { body: bodyLines.join("\n"), reply: replyLines.join("\n") };
+}
+
+function extractObsidianFrontmatter(lines) {
+  if (!Array.isArray(lines) || !/^\uFEFF?---\s*$/.test(String(lines[0] || ""))) {
+    return null;
+  }
+
+  for (let index = 1; index < lines.length; index += 1) {
+    if (/^(?:---|\.\.\.)\s*$/.test(String(lines[index] || ""))) {
+      return {
+        endLine: index,
+        rawMarkdown: lines.slice(0, index + 1).join("\n")
+      };
+    }
+  }
+
+  return null;
+}
+
+function unquoteFrontmatterValue(value) {
+  const text = String(value || "").trim();
+  if (text.length >= 2 && text.startsWith('"') && text.endsWith('"')) {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return text.slice(1, -1);
+    }
+  }
+  if (text.length >= 2 && text.startsWith("'") && text.endsWith("'")) {
+    return text.slice(1, -1).replace(/''/g, "'");
+  }
+  return text;
+}
+
+function splitFrontmatterList(value) {
+  const text = String(value || "").trim();
+  if (!text.startsWith("[") || !text.endsWith("]")) return null;
+  const items = [];
+  let quote = "";
+  let escaped = false;
+  let current = "";
+  for (const char of text.slice(1, -1)) {
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\" && quote === '"') {
+      current += char;
+      escaped = true;
+      continue;
+    }
+    if ((char === '"' || char === "'") && (!quote || quote === char)) {
+      quote = quote ? "" : char;
+      current += char;
+      continue;
+    }
+    if (char === "," && !quote) {
+      items.push(unquoteFrontmatterValue(current));
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  if (current.trim() || items.length) items.push(unquoteFrontmatterValue(current));
+  return items.filter((item) => String(item).trim());
+}
+
+function parseObsidianFrontmatter(rawMarkdown) {
+  if (!rawMarkdown) return [];
+  const lines = String(rawMarkdown).split(/\r?\n/).slice(1, -1);
+  const fields = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = /^([A-Za-z0-9_-]+):(?:[ \t]*(.*))?$/.exec(lines[index]);
+    if (!match) continue;
+    const key = match[1];
+    let rawValue = String(match[2] || "").trim();
+    const continuation = [];
+    while (index + 1 < lines.length && (/^[ \t]+/.test(lines[index + 1]) || !lines[index + 1].trim())) {
+      index += 1;
+      continuation.push(lines[index]);
+    }
+
+    let values = splitFrontmatterList(rawValue);
+    if (!values && !rawValue) {
+      const listValues = continuation
+        .map((line) => /^\s*-\s+(.*)$/.exec(line))
+        .filter(Boolean)
+        .map((item) => unquoteFrontmatterValue(item[1]));
+      if (listValues.length) values = listValues;
+    }
+
+    if (rawValue === "|" || rawValue === ">") {
+      const parts = continuation.map((line) => line.replace(/^[ \t]+/, ""));
+      rawValue = rawValue === ">" ? parts.join(" ") : parts.join("\n");
+    } else if (!rawValue && !values && continuation.length) {
+      rawValue = continuation.map((line) => line.trim()).filter(Boolean).join(" ");
+    }
+
+    const value = values || unquoteFrontmatterValue(rawValue);
+    const normalizedKey = key.toLowerCase();
+    let type = "text";
+    if (normalizedKey === "tags" || normalizedKey === "tag") type = "tags";
+    else if (values) type = "list";
+    else if (/^\d{4}-\d{2}-\d{2}(?:[T ][^\s]+)?$/.test(String(value))) type = "date";
+    else if (/^-?(?:\d+|\d*\.\d+)$/.test(String(value))) type = "number";
+    else if (/^(?:true|false)$/i.test(String(value))) type = "boolean";
+    fields.push({ key, type, value });
+  }
+
+  return fields;
+}
+
+function createPropertyIcon(type) {
+  const icon = document.createElement("span");
+  icon.className = "note-property-icon";
+  icon.setAttribute("aria-hidden", "true");
+  if (type === "tags") {
+    icon.innerHTML = '<svg viewBox="0 0 16 16"><path d="M2.5 3.5v4.2l5.8 5.8 5.2-5.2-5.8-5.8H2.5Z"/><circle cx="5.4" cy="5.4" r=".9"/></svg>';
+  } else if (type === "date") {
+    icon.innerHTML = '<svg viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="10" rx="1.5"/><path d="M5 2v3M11 2v3M2.5 6.5h11"/></svg>';
+  } else if (type === "number") {
+    icon.classList.add("note-property-icon--number");
+    icon.textContent = "01";
+  } else if (type === "boolean") {
+    icon.innerHTML = '<svg viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="2"/><path d="m5 8 2 2 4-4"/></svg>';
+  } else {
+    icon.innerHTML = '<svg viewBox="0 0 16 16"><path d="M3 4h10M3 8h10M3 12h7"/></svg>';
+  }
+  return icon;
+}
+
+function renderReadonlyFrontmatter(fields) {
+  if (!fields?.length) return null;
+  const section = document.createElement("section");
+  section.className = "note-properties";
+  section.contentEditable = "false";
+  section.setAttribute("aria-label", "笔记属性（只读）");
+
+  const title = document.createElement("div");
+  title.className = "note-properties-title";
+  title.textContent = "笔记属性";
+  section.appendChild(title);
+
+  for (const field of fields) {
+    const row = document.createElement("div");
+    row.className = "note-property-row";
+    row.appendChild(createPropertyIcon(field.type));
+
+    const key = document.createElement("div");
+    key.className = "note-property-key";
+    key.textContent = field.key;
+    key.title = field.key;
+
+    const value = document.createElement("div");
+    value.className = "note-property-value";
+    if (field.type === "tags" || field.type === "list") {
+      value.classList.add("note-property-value--chips");
+      const values = Array.isArray(field.value) ? field.value : [field.value];
+      for (const item of values) {
+        const chip = document.createElement("span");
+        chip.className = `note-property-chip${field.type === "tags" ? " note-property-chip--tag" : ""}`;
+        chip.textContent = String(item);
+        value.appendChild(chip);
+      }
+    } else {
+      const displayValue = field.type === "date" ? String(field.value).replace(/^(\d{4})-(\d{2})-(\d{2})$/, "$1/$2/$3") : String(field.value);
+      value.textContent = displayValue || "—";
+    }
+
+    row.append(key, value);
+    section.appendChild(row);
+  }
+  return section;
 }
 
 function preprocessMarkdownContent(content) {
@@ -2774,16 +3126,22 @@ function preprocessMarkdownContent(content) {
       }
       if (cursor < rawLines.length) {
         const meta = parseAnnotationMeta(metaLines);
+        const annotationContent = extractAnnotationContent(visibleLines);
         annotations.push({
           id: String(meta.id || `annotation-${index + 1}`),
           quote: String(meta.quote || ""),
           heading: String(meta.heading || ""),
           anchor: String(meta.anchor || ""),
           createdAt: String(meta.created_at || ""),
+          status: String(meta.status || "open").toLowerCase(),
+          resolvedAt: String(meta.resolved_at || ""),
+          changeQuote: String(meta.change_quote || ""),
+          highlightQuote: String(meta.change_quote || meta.quote || ""),
           targetLine: Number.isFinite(Number(meta.line_start)) ? Math.max(0, Number(meta.line_start) - 1) : Math.max(0, index - 1),
           sourceStartLine: index,
           sourceEndLine: cursor,
-          body: extractAnnotationBody(visibleLines),
+          body: annotationContent.body,
+          reply: annotationContent.reply,
           rawMarkdown: rawLines.slice(index, cursor + 1).join("\n")
         });
         for (let hiddenIndex = index; hiddenIndex <= cursor; hiddenIndex += 1) bodyLines.push("");

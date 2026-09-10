@@ -22,6 +22,7 @@ type ViewerMessage =
       anchor?: string;
     }
   | { type: "updateAnnotation"; annotationId?: string; comment?: string }
+  | { type: "resolveAnnotation"; annotationId?: string }
   | { type: "deleteAnnotation"; annotationId?: string }
   | { type: "normalizeAnnotations"; annotationIds?: string[] }
   | { type: "requestReload" };
@@ -877,6 +878,17 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         return;
       }
 
+      if (message.type === "resolveAnnotation") {
+        try {
+          await this.resolveAnnotation(document, message);
+          await postToWebview({ type: "annotationResolved" });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          await postToWebview({ type: "annotationError", message: detail });
+        }
+        return;
+      }
+
       if (message.type === "deleteAnnotation") {
         try {
           await this.deleteAnnotation(document, message);
@@ -1058,7 +1070,8 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     const metaLines = [
       `id: ${JSON.stringify(id)}`,
       `quote: ${JSON.stringify(selectedText)}`,
-      `created_at: ${JSON.stringify(createdAt)}`
+      `created_at: ${JSON.stringify(createdAt)}`,
+      `status: "open"`
     ];
     if (lineStart) metaLines.push(`line_start: ${lineStart}`);
     if (lineEnd) metaLines.push(`line_end: ${lineEnd}`);
@@ -1166,11 +1179,15 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       .split(/\r?\n/)
       .map((line) => (line ? `> ${line}` : ">"))
       .join(eol);
+    const visibleBlock = content.slice(block.metaEnd, block.end);
+    const replyMatch = /(?:\r?\n)>\s*\*\*AI\s*回复[：:]?\*\*[\s\S]*?(?=(?:\r?\n)?<!--\s*mr-annotation:end\s*-->)/i.exec(visibleBlock);
+    const preservedReply = replyMatch ? replyMatch[0].replace(/^\r?\n/, "") : "";
     const replacement = [
       content.slice(block.start, block.metaEnd),
       `> **批注：${quoteLabel}${compactQuote.length > 80 ? "…" : ""}**`,
       ">",
       quotedComment,
+      ...(preservedReply ? [">", preservedReply] : []),
       "<!-- mr-annotation:end -->"
     ].join(eol);
     await this.replaceAnnotationRange(document, block.start, block.end, replacement);
@@ -1192,6 +1209,27 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     if (content.slice(end, end + 2) === "\r\n") end += 2;
     else if (content[end] === "\n") end += 1;
     await this.replaceAnnotationRange(document, start, end, "");
+  }
+
+  private async resolveAnnotation(
+    document: vscode.TextDocument,
+    message: Extract<ViewerMessage, { type: "resolveAnnotation" }>
+  ): Promise<void> {
+    const annotationId = String(message.annotationId || "").trim();
+    if (!annotationId) throw new Error("批注 ID 不能为空。");
+    const content = document.getText();
+    const block = this.findAnnotationBlock(content, annotationId);
+    if (!block) throw new Error("没有在当前 Markdown 中找到这条批注。");
+
+    const eol = content.includes("\r\n") ? "\r\n" : "\n";
+    const metadataText = content.slice(block.start, block.metaEnd);
+    const resolvedAt = new Date().toISOString();
+    const nextMetadata = metadataText.replace(
+      /(?:\r?\n)?-->$/,
+      `${eol}status: "resolved"${eol}resolved_at: ${JSON.stringify(resolvedAt)}${eol}-->`
+    );
+    const replacement = `${nextMetadata}${content.slice(block.metaEnd, block.end)}`;
+    await this.replaceAnnotationRange(document, block.start, block.end, replacement);
   }
 
   private async normalizeAnnotationPlacement(
@@ -1355,6 +1393,10 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       aria-label="Markdown 编辑器"
     ></textarea>
   </main>
+  <div id="annotationHistoryRoot" class="annotation-history-root" hidden>
+    <button id="annotationHistoryButton" type="button" class="editor-mode-btn annotation-history-button" aria-expanded="false" aria-controls="annotationHistoryPanel">批注</button>
+    <section id="annotationHistoryPanel" class="annotation-history-panel" hidden aria-label="已完成批注"></section>
+  </div>
   <div class="editor-mode-root">
     <button id="editorModeToggle" type="button" class="editor-mode-btn" aria-pressed="false">编辑</button>
     <button id="editorSaveBtn" type="button" class="editor-mode-btn primary" hidden>保存并预览</button>

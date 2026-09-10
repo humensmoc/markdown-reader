@@ -174,6 +174,10 @@ body.editor-mode .reader-tools-root {
   display: none;
 }
 
+body.editor-mode .annotation-history-root {
+  display: none;
+}
+
 .toc-dock {
   width: var(--toc-width);
   display: flex;
@@ -1385,6 +1389,127 @@ body.mermaid-modal-open {
   border-color: color-mix(in srgb, var(--blue) 35%, var(--line-strong));
 }
 
+.annotation-history-root {
+  position: fixed;
+  right: 18px;
+  bottom: 108px;
+  z-index: 45;
+}
+
+.annotation-history-root[hidden] {
+  display: none;
+}
+
+.annotation-history-button[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--blue) 45%, var(--line-strong));
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
+.annotation-history-panel {
+  position: absolute;
+  right: 0;
+  bottom: 42px;
+  width: min(430px, calc(100vw - 36px));
+  max-height: min(680px, calc(100vh - 142px));
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--paper-strong);
+  box-shadow: var(--shadow);
+}
+
+.annotation-history-panel[hidden] {
+  display: none;
+}
+
+.annotation-history-panel > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.annotation-history-panel h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.annotation-history-panel > header button {
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.annotation-history-panel > header button:hover {
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
+.annotation-history-list {
+  max-height: calc(min(680px, 100vh - 142px) - 50px);
+  padding: 10px;
+  overflow: auto;
+}
+
+.annotation-history-item {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--paper);
+}
+
+.annotation-history-item + .annotation-history-item {
+  margin-top: 9px;
+}
+
+.annotation-history-field + .annotation-history-field {
+  margin-top: 10px;
+}
+
+.annotation-history-field > strong {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.annotation-history-field > div {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.annotation-history-field.is-original > div,
+.annotation-history-field.is-change > div {
+  padding: 6px 8px;
+  border-left: 2px solid color-mix(in srgb, var(--blue) 55%, var(--line-strong));
+  background: color-mix(in srgb, var(--blue) 7%, transparent);
+}
+
+.annotation-history-field.is-change > div {
+  border-left-color: color-mix(in srgb, #f2c94c 72%, var(--line-strong));
+  background: color-mix(in srgb, #f2c94c 9%, transparent);
+}
+
+.annotation-history-field.is-reply > div {
+  color: var(--text);
+}
+
+.annotation-history-item time {
+  display: block;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
 .annotation-action {
   position: fixed;
   z-index: 1100;
@@ -1532,6 +1657,58 @@ body.editor-mode .annotation-dock {
   margin-bottom: 0;
 }
 
+.annotation-card-reply {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.annotation-card-change {
+  margin-top: 9px;
+  padding: 7px 8px;
+  border-left: 2px solid color-mix(in srgb, #f2c94c 72%, var(--line-strong));
+  background: color-mix(in srgb, #f2c94c 9%, transparent);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.annotation-card-change > strong {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.annotation-card-reply > strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--blue);
+  font-size: 11px;
+}
+
+.annotation-card-reply p {
+  margin: 0 0 6px;
+}
+
+.annotation-resolve-button {
+  width: 100%;
+  margin-top: 10px;
+  padding: 5px 8px;
+  border: 1px solid color-mix(in srgb, var(--blue) 38%, var(--line-strong));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--blue) 10%, var(--paper));
+  color: var(--blue);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.annotation-resolve-button:hover {
+  background: var(--blue-soft);
+}
+
 .has-annotation {
   position: relative;
 }
@@ -1586,6 +1763,39 @@ body.wysiwyg-mode .annotation-marker {
   padding: 20px;
   background: color-mix(in srgb, var(--bg) 45%, transparent);
   backdrop-filter: blur(3px);
+}
+
+.annotation-dialog.annotation-compose-dialog {
+  inset: auto 14px auto auto;
+  display: block;
+  width: min(320px, max(240px, calc((100vw - var(--readable-line-width)) / 2 - 34px)));
+  padding: 0;
+  background: transparent;
+  backdrop-filter: none;
+  pointer-events: none;
+}
+
+.annotation-compose-dialog.annotation-left {
+  right: auto;
+  left: 14px;
+}
+
+.annotation-compose-dialog .annotation-dialog-card {
+  width: 100%;
+  max-height: calc(100vh - 20px);
+  padding: 14px;
+  border-radius: 9px;
+  pointer-events: auto;
+}
+
+.annotation-compose-dialog .annotation-dialog-card h2 {
+  font-size: 14px;
+}
+
+.annotation-compose-dialog .annotation-quote {
+  max-height: 96px;
+  padding: 8px 10px;
+  font-size: 12px;
 }
 
 .annotation-dialog-card {
@@ -1660,6 +1870,18 @@ body.wysiwyg-mode .annotation-marker {
   border-color: color-mix(in srgb, var(--blue) 55%, var(--line-strong));
   background: color-mix(in srgb, var(--blue) 16%, var(--paper));
   color: var(--blue);
+}
+
+.annotation-dialog-actions button.danger {
+  border-color: color-mix(in srgb, var(--vscode-errorForeground) 55%, var(--line-strong));
+  background: color-mix(in srgb, var(--vscode-errorForeground) 12%, var(--paper));
+  color: var(--vscode-errorForeground);
+}
+
+.annotation-delete-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .annotation-toast {
