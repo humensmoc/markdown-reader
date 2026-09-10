@@ -1231,10 +1231,15 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     const eol = content.includes("\r\n") ? "\r\n" : "\n";
     const metadataText = content.slice(block.start, block.metaEnd);
     const resolvedAt = new Date().toISOString();
-    const nextMetadata = metadataText.replace(
-      /(?:\r?\n)?-->$/,
-      `${eol}status: "resolved"${eol}resolved_at: ${JSON.stringify(resolvedAt)}${eol}-->`
-    );
+    let nextMetadata = metadataText.replace(/(?:\r?\n)?-->$/, "");
+    const upsertMetadata = (key: string, value: string): void => {
+      const pattern = new RegExp(`^${key}:\\s*.*$`, "im");
+      if (pattern.test(nextMetadata)) nextMetadata = nextMetadata.replace(pattern, `${key}: ${value}`);
+      else nextMetadata = `${nextMetadata}${eol}${key}: ${value}`;
+    };
+    upsertMetadata("status", '"resolved"');
+    upsertMetadata("resolved_at", JSON.stringify(resolvedAt));
+    nextMetadata = `${nextMetadata}${eol}-->`;
     const replacement = `${nextMetadata}${content.slice(block.metaEnd, block.end)}`;
     await this.replaceAnnotationRange(document, block.start, block.end, replacement);
   }
