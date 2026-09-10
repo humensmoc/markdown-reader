@@ -1094,16 +1094,27 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 
     const currentContent = document.getText();
     const eol = currentContent.includes("\r\n") ? "\r\n" : "\n";
-    const hasAiGuide = /^[ \t]*<!--\s*mr-annotation:ai-guide\s*$/m.test(currentContent);
+    const aiGuideMatch = /^[ \t]*<!--\s*mr-annotation:ai-guide\s*$[\s\S]*?^[ \t]*-->[ \t]*$/m.exec(currentContent);
+    const hasAiGuide = Boolean(aiGuideMatch);
     const firstAnnotationMatch = /^[ \t]*<!--\s*mr-annotation:start\s*$/m.exec(currentContent);
     const aiGuide = [
       "<!-- mr-annotation:ai-guide",
-      "AI 操作指南：处理 status 为 open 的批注。按要求修改正文后，对比修改前后的内容；在原批注元数据写入 change_quote，内容必须摘自本次实际新增或改写后的正文，并选择最能代表本批注解决结果的主要改动。不要按文档出现顺序选择，也不要填写未改动的上下文、原批注选文或顺手调整的次要内容。change_quote 只记录一处，应能在修改后正文中精确匹配，并尽量包含足够上下文以便唯一定位。随后在批注末尾添加 **AI 回复：** 和改动简述。保留批注，不要替用户解决。",
+      "AI 操作指南：处理 status 为 open 的批注。按要求修改正文后，对比修改前后的内容；在原批注元数据写入 change_quotes JSON 字符串数组，逐项记录所有与该批注要求直接相关的实际新增或改写正文。每一项都应能在修改后正文中精确匹配，并包含足够上下文以便唯一定位；不要填写未改动的上下文、原批注选文或与该批注无关的顺手调整。随后在批注末尾添加 **AI 回复：**，说明完成了哪些改动。保留批注，不要替用户解决。旧版 change_quote 字段仍可读取。",
       "-->"
     ].join(eol);
     const entryForDocument = eol === "\n" ? entry : entry.replace(/\n/g, eol);
     const insertAt = document.positionAt(currentContent.length);
     const edit = new vscode.WorkspaceEdit();
+    if (aiGuideMatch && aiGuideMatch[0] !== aiGuide) {
+      edit.replace(
+        document.uri,
+        new vscode.Range(
+          document.positionAt(aiGuideMatch.index),
+          document.positionAt(aiGuideMatch.index + aiGuideMatch[0].length)
+        ),
+        aiGuide
+      );
+    }
     if (!hasAiGuide && firstAnnotationMatch) {
       edit.insert(document.uri, document.positionAt(firstAnnotationMatch.index), `${aiGuide}${eol}${eol}`);
     }

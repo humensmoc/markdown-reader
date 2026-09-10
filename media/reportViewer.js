@@ -702,7 +702,10 @@ function setReaderSettingsOpen(open) {
   }
   readerSettingsToggle.setAttribute("aria-expanded", String(open));
   readerSettingsPanel.hidden = !open;
+  document.body.classList.toggle("reader-settings-open", open);
   if (open) {
+    if (annotationHistoryPanel) annotationHistoryPanel.hidden = true;
+    annotationHistoryButton?.setAttribute("aria-expanded", "false");
     requestReaderSettings();
   }
 }
@@ -2574,13 +2577,21 @@ function renderAnnotationQuoteLine(line) {
   return container.textContent || "";
 }
 
-function getAnnotationHighlightQuotes(annotation) {
-  const rawQuote = String(annotation?.changeQuote || annotation?.quote || "").trim();
+function getAnnotationChangeQuotes(annotation) {
+  const quotes = [
+    ...(Array.isArray(annotation?.changeQuotes) ? annotation.changeQuotes : []),
+    annotation?.changeQuote
+  ];
+  const changes = Array.from(new Set(quotes.map((quote) => String(quote || "").trim()).filter(Boolean)));
+  return changes.length ? changes : [String(annotation?.quote || "").trim()].filter(Boolean);
+}
+
+function getAnnotationHighlightQuotes(rawValue) {
+  const rawQuote = String(rawValue || "").trim();
   if (!rawQuote) return [];
 
   const visibleLines = rawQuote.split(/\r?\n/).map(renderAnnotationQuoteLine).filter(Boolean);
   return Array.from(new Set([
-    annotation?.highlightQuote,
     rawQuote,
     visibleLines.join(" "),
     ...visibleLines
@@ -2612,6 +2623,27 @@ function findMostSpecificAnnotationTarget(root, predicate) {
   }, null);
 }
 
+function findAnnotationQuoteMatch(annotation, rawQuote) {
+  const section = document.getElementById(annotation.fileId);
+  if (!section) return null;
+  const savedBranch = findAnnotationBranch(section, annotation);
+  const searchRoot = savedBranch || section;
+
+  for (const quote of getAnnotationHighlightQuotes(rawQuote)) {
+    const compactQuote = normalizeAnnotationMatchText(quote);
+    if (!compactQuote) continue;
+    const target = findMostSpecificAnnotationTarget(
+      searchRoot,
+      (block) => normalizeAnnotationMatchText(block.textContent).includes(compactQuote)
+    ) || (savedBranch ? findMostSpecificAnnotationTarget(
+      section,
+      (block) => normalizeAnnotationMatchText(block.textContent).includes(compactQuote)
+    ) : null);
+    if (target) return { target, quote };
+  }
+  return null;
+}
+
 function findAnnotationAnchor(annotation) {
   const section = document.getElementById(annotation.fileId);
   if (!section) return null;
@@ -2620,27 +2652,11 @@ function findAnnotationAnchor(annotation) {
   const searchRoot = savedBranch || section;
   const blocks = Array.from(searchRoot.querySelectorAll("[data-md-start][data-md-end]"))
     .filter((block) => !block.classList.contains("content-branch"));
-  for (const quote of getAnnotationHighlightQuotes(annotation)) {
-    const compactQuote = normalizeAnnotationMatchText(quote);
-    if (compactQuote) {
-      const quoteTarget = findMostSpecificAnnotationTarget(
-        searchRoot,
-        (block) => normalizeAnnotationMatchText(block.textContent).includes(compactQuote)
-      );
-      if (quoteTarget) {
-        annotation.highlightQuote = quote;
-        return quoteTarget;
-      }
-      if (savedBranch) {
-        const documentTarget = findMostSpecificAnnotationTarget(
-          section,
-          (block) => normalizeAnnotationMatchText(block.textContent).includes(compactQuote)
-        );
-        if (documentTarget) {
-          annotation.highlightQuote = quote;
-          return documentTarget;
-        }
-      }
+  for (const rawQuote of getAnnotationChangeQuotes(annotation)) {
+    const match = findAnnotationQuoteMatch(annotation, rawQuote);
+    if (match) {
+      annotation.highlightQuote = match.quote;
+      return match.target;
     }
   }
 
@@ -2681,16 +2697,18 @@ function getAnnotationTextNodes(anchor) {
 }
 
 function highlightAnnotationQuote(annotation) {
-  const anchor = annotation.anchorElement;
-  if (!anchor) return [];
-  for (const quote of getAnnotationHighlightQuotes(annotation)) {
-    const highlights = highlightTextInAnnotationAnchor(anchor, quote, annotation.id);
+  const allHighlights = [];
+  annotation.anchorElements = [];
+  for (const rawQuote of getAnnotationChangeQuotes(annotation)) {
+    const match = findAnnotationQuoteMatch(annotation, rawQuote);
+    if (!match) continue;
+    const highlights = highlightTextInAnnotationAnchor(match.target, match.quote, annotation.id);
     if (highlights.length) {
-      annotation.highlightQuote = quote;
-      return highlights;
+      annotation.anchorElements.push(match.target);
+      allHighlights.push(...highlights);
     }
   }
-  return [];
+  return allHighlights;
 }
 
 function highlightTextInAnnotationAnchor(anchor, highlightQuote, annotationId) {
@@ -2803,9 +2821,7 @@ function renderAnnotationDock() {
 
     const card = document.createElement("article");
     card.className = "annotation-card";
-    const hasAiResponse = Boolean(
-      String(annotation.reply || "").trim() || String(annotation.changeQuote || "").trim()
-    );
+    const hasAiResponse = Boolean(String(annotation.reply || "").trim() || annotation.changeQuotes.length);
     card.classList.toggle("has-ai-reply", hasAiResponse);
     card.dataset.annotationId = annotation.id;
     card.tabIndex = -1;
@@ -2949,7 +2965,7 @@ function renderAnnotationHistory() {
     item.append(
       createAnnotationHistoryField("批注问题", annotation.body),
       createAnnotationHistoryField("原选中内容", annotation.quote, "is-original"),
-      createAnnotationHistoryField("AI 改动位置", annotation.changeQuote, "is-change"),
+      createAnnotationHistoryField("AI 改动位置", annotation.changeQuotes.join("\n\n"), "is-change"),
       createAnnotationHistoryField("AI 回复", annotation.reply, "is-reply")
     );
     if (annotation.resolvedAt) {
@@ -3282,6 +3298,10 @@ function preprocessMarkdownContent(content) {
       if (cursor < rawLines.length) {
         const meta = parseAnnotationMeta(metaLines);
         const annotationContent = extractAnnotationContent(visibleLines);
+        const changeQuotes = Array.from(new Set([
+          ...(Array.isArray(meta.change_quotes) ? meta.change_quotes : []),
+          meta.change_quote
+        ].map((quote) => String(quote || "").trim()).filter(Boolean)));
         annotations.push({
           id: String(meta.id || `annotation-${index + 1}`),
           quote: String(meta.quote || ""),
@@ -3291,7 +3311,8 @@ function preprocessMarkdownContent(content) {
           status: String(meta.status || "open").toLowerCase(),
           resolvedAt: String(meta.resolved_at || ""),
           changeQuote: String(meta.change_quote || ""),
-          highlightQuote: String(meta.change_quote || meta.quote || ""),
+          changeQuotes,
+          highlightQuote: String(changeQuotes[0] || meta.quote || ""),
           targetLine: Number.isFinite(Number(meta.line_start)) ? Math.max(0, Number(meta.line_start) - 1) : Math.max(0, index - 1),
           sourceStartLine: index,
           sourceEndLine: cursor,
