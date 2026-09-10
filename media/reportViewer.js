@@ -3,7 +3,9 @@ const vscode = typeof acquireVsCodeApi === "function" ? acquireVsCodeApi() : nul
 const reportLayout = document.getElementById("reportLayout");
 const tocDock = document.getElementById("tocDock");
 const tocToggle = document.getElementById("tocToggle");
+const tocSideToggle = document.getElementById("tocSideToggle");
 const toc = document.getElementById("toc");
+const annotationDock = document.getElementById("annotationDock");
 const reportContent = document.getElementById("reportContent");
 const reportEditor = document.getElementById("reportEditor");
 const editorModeToggle = document.getElementById("editorModeToggle");
@@ -126,7 +128,9 @@ const SETTINGS_KEYS = {
   showContentNumbers: "meowReportMarkdown.showContentNumbers",
   headingFontScale: "meowReportMarkdown.headingFontScale",
   rainbowHeadingColors: "meowReportMarkdown.rainbowHeadingColors",
-  enableBlockDrag: "meowReportMarkdown.enableBlockDrag"
+  enableBlockDrag: "meowReportMarkdown.enableBlockDrag",
+  tocOffsetX: "meowReportMarkdown.tocOffsetX",
+  tocOffsetY: "meowReportMarkdown.tocOffsetY"
 };
 const LEGACY_SETTINGS_KEYS = {
   contentFontScale: "meowReportMarkdown.contentFontScale",
@@ -156,6 +160,7 @@ initReaderSettings();
 initEditorMode();
 initBlockDrag();
 initCiteHover();
+initAnnotations();
 
 window.addEventListener("message", (event) => {
   const message = event.data;
@@ -271,12 +276,41 @@ function initTocDock() {
     return;
   }
 
+  loadTocPosition();
+  applyTocPosition();
   const saved = localStorage.getItem("meowReportMarkdown.tocCollapsed");
+  const savedSide = localStorage.getItem("meowReportMarkdown.tocSide");
+  setTocSide(savedSide === "right" ? "right" : "left", { persist: false });
   setTocCollapsed(saved === "1");
 
   tocToggle.addEventListener("click", () => {
     setTocCollapsed(!tocDock.classList.contains("collapsed"));
   });
+
+  tocSideToggle?.addEventListener("click", () => {
+    setTocSide(tocDock.classList.contains("toc-right") ? "left" : "right");
+  });
+}
+
+function setTocSide(side, { persist = true } = {}) {
+  if (!tocDock) {
+    return;
+  }
+
+  const isRight = side === "right";
+  tocDock.classList.toggle("toc-right", isRight);
+  tocDock.classList.toggle("toc-left", !isRight);
+  annotationDock?.classList.toggle("annotation-left", isRight);
+  annotationDock?.classList.toggle("annotation-right", !isRight);
+  if (tocSideToggle) {
+    tocSideToggle.textContent = isRight ? "←" : "→";
+    tocSideToggle.setAttribute("aria-label", isRight ? "将目录移到左侧" : "将目录移到右侧");
+    tocSideToggle.title = isRight ? "将目录移到左侧" : "将目录移到右侧";
+  }
+  if (persist) {
+    localStorage.setItem("meowReportMarkdown.tocSide", isRight ? "right" : "left");
+  }
+  scheduleAnnotationPositions();
 }
 
 function setTocCollapsed(collapsed) {
@@ -1378,11 +1412,13 @@ function initTocResize() {
 
     const startX = event.clientX;
     const startWidth = tocDock.getBoundingClientRect().width;
+    const resizeDirection = tocDock.classList.contains("toc-right") ? -1 : 1;
     handle.classList.add("is-dragging");
     tocDock.classList.add("is-resizing");
 
     const onMove = (moveEvent) => {
-      const nextWidth = Math.min(maxWidth, Math.max(minWidth, startWidth + (moveEvent.clientX - startX)));
+      const widthDelta = (moveEvent.clientX - startX) * resizeDirection;
+      const nextWidth = Math.min(maxWidth, Math.max(minWidth, startWidth + widthDelta));
       document.documentElement.style.setProperty("--toc-width", `${Math.round(nextWidth)}px`);
     };
 
@@ -2024,6 +2060,8 @@ function renderReport(payload) {
   closeMermaidModal();
   toc.innerHTML = "";
   reportContent.innerHTML = "";
+  renderedAnnotations = [];
+  if (annotationDock) annotationDock.innerHTML = "";
   activeCitation = null;
   citeRefSerial = 0;
   citeSourcePreviewIndex.clear();
@@ -2045,6 +2083,8 @@ function renderReport(payload) {
     reportContent.appendChild(renderFile(file));
   }
   toc.appendChild(tocInner);
+  renderAnnotationDock();
+  requestAnnotationNormalization();
   updateActiveToc();
   void hydrateMermaid(reportContent);
   applyBlockDragSetting();
@@ -2252,13 +2292,533 @@ function withOutlineNumbers(file) {
   };
 }
 
+function initAnnotations() {
+  if (!reportContent || !vscode) {
+    return;
+  }
+
+  document.addEventListener("selectionchange", () => {
+    window.requestAnimationFrame(updateAnnotationAction);
+  });
+  window.addEventListener("scroll", () => {
+    hideAnnotationAction();
+    scheduleAnnotationPositions();
+  }, { passive: true });
+  window.addEventListener("resize", () => {
+    hideAnnotationAction();
+    scheduleAnnotationPositions();
+  });
+}
+
+function getSelectionElement(node) {
+  return node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+}
+
+function getAnnotationSelection() {
+  if (document.body.classList.contains("editor-mode") || annotationDialog) {
+    return null;
+  }
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || selection.rangeCount !== 1) {
+    return null;
+  }
+  const range = selection.getRangeAt(0);
+  const startElement = getSelectionElement(range.startContainer);
+  const endElement = getSelectionElement(range.endContainer);
+  if (!startElement || !endElement || !reportContent.contains(startElement) || !reportContent.contains(endElement)) {
+    return null;
+  }
+  if (startElement.closest(".reader-tools-root, .annotation-dialog") || endElement.closest(".reader-tools-root, .annotation-dialog")) {
+    return null;
+  }
+  const selectedText = selection.toString().trim();
+  if (!selectedText) {
+    return null;
+  }
+
+  const startBlock = startElement.closest("[data-md-start]");
+  const endBlock = endElement.closest("[data-md-end]");
+  const branch = startElement.closest(".content-branch");
+  const heading = branch?.querySelector(":scope > .report-heading");
+  return {
+    selectedText,
+    lineStart: startBlock?.dataset.mdStart ? Number(startBlock.dataset.mdStart) + 1 : undefined,
+    lineEnd: endBlock?.dataset.mdEnd ? Number(endBlock.dataset.mdEnd) + 1 : undefined,
+    heading: heading?.dataset.outlineText || heading?.querySelector(".outline-text")?.textContent?.trim() || "",
+    anchor: branch?.dataset.anchor || "",
+    rect: range.getBoundingClientRect()
+  };
+}
+
+function ensureAnnotationAction() {
+  if (annotationAction) {
+    return annotationAction;
+  }
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "annotation-action";
+  button.textContent = "添加批注";
+  button.hidden = true;
+  button.addEventListener("mousedown", (event) => event.preventDefault());
+  button.addEventListener("click", () => {
+    if (pendingAnnotationSelection) {
+      openAnnotationDialog(pendingAnnotationSelection);
+    }
+  });
+  document.body.appendChild(button);
+  annotationAction = button;
+  return button;
+}
+
+function updateAnnotationAction() {
+  const info = getAnnotationSelection();
+  if (!info || !info.rect || (!info.rect.width && !info.rect.height)) {
+    hideAnnotationAction();
+    return;
+  }
+  pendingAnnotationSelection = info;
+  const button = ensureAnnotationAction();
+  button.hidden = false;
+  const left = Math.min(window.innerWidth - button.offsetWidth - 12, Math.max(12, info.rect.left + info.rect.width / 2 - button.offsetWidth / 2));
+  const top = Math.max(12, info.rect.top - button.offsetHeight - 8);
+  button.style.left = `${Math.round(left)}px`;
+  button.style.top = `${Math.round(top)}px`;
+}
+
+function hideAnnotationAction() {
+  if (annotationAction) {
+    annotationAction.hidden = true;
+  }
+  if (!annotationDialog) {
+    pendingAnnotationSelection = null;
+  }
+}
+
+function openAnnotationDialog(info, annotation = null) {
+  hideAnnotationAction();
+  const editing = Boolean(annotation);
+  const overlay = document.createElement("div");
+  overlay.className = "annotation-dialog";
+  overlay.innerHTML = `
+    <div class="annotation-dialog-card" role="dialog" aria-modal="true" aria-labelledby="annotationDialogTitle">
+      <h2 id="annotationDialogTitle">${editing ? "编辑批注" : "添加批注"}</h2>
+      <div class="annotation-quote"></div>
+      <label for="annotationComment">批注内容</label>
+      <textarea id="annotationComment" rows="6" placeholder="写下你的批注…"></textarea>
+      <div class="annotation-dialog-actions">
+        <button type="button" data-action="cancel">取消</button>
+        <button type="button" class="primary" data-action="save">${editing ? "保存修改" : "添加批注"}</button>
+      </div>
+    </div>`;
+  overlay.querySelector(".annotation-quote").textContent = editing ? annotation.quote : info.selectedText;
+  overlay.querySelector("textarea").value = editing ? annotation.body : "";
+  overlay.querySelector('[data-action="cancel"]').addEventListener("click", closeAnnotationDialog);
+  overlay.addEventListener("mousedown", (event) => {
+    if (event.target === overlay) closeAnnotationDialog();
+  });
+  overlay.querySelector('[data-action="save"]').addEventListener("click", () => {
+    const textarea = overlay.querySelector("textarea");
+    const comment = textarea.value.trim();
+    if (!comment) {
+      textarea.focus();
+      return;
+    }
+    if (editing) {
+      vscode?.postMessage({ type: "updateAnnotation", annotationId: annotation.id, comment });
+    } else {
+      vscode?.postMessage({
+        type: "addAnnotation",
+        selectedText: info.selectedText,
+        comment,
+        lineStart: info.lineStart,
+        lineEnd: info.lineEnd,
+        heading: info.heading,
+        anchor: info.anchor
+      });
+    }
+    overlay.querySelectorAll("button, textarea").forEach((element) => element.disabled = true);
+  });
+  overlay.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeAnnotationDialog();
+  });
+  document.body.appendChild(overlay);
+  annotationDialog = overlay;
+  window.requestAnimationFrame(() => overlay.querySelector("textarea")?.focus());
+}
+
+function closeAnnotationDialog() {
+  annotationDialog?.remove();
+  annotationDialog = null;
+  pendingAnnotationSelection = null;
+  window.getSelection()?.removeAllRanges();
+}
+
+function showAnnotationToast(message, isError = false) {
+  document.querySelector(".annotation-toast")?.remove();
+  if (annotationToastTimer) window.clearTimeout(annotationToastTimer);
+  const toast = document.createElement("div");
+  toast.className = `annotation-toast${isError ? " is-error" : ""}`;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  annotationToastTimer = window.setTimeout(() => toast.remove(), 3200);
+}
+
+function normalizeAnnotationMatchText(value) {
+  return String(value || "").normalize("NFKC").replace(/\s+/g, "");
+}
+
+function findAnnotationBranch(section, annotation) {
+  const branches = Array.from(section.querySelectorAll(".content-branch"));
+  if (annotation.anchor) {
+    const savedBranch = branches.find((branch) => branch.dataset.anchor === annotation.anchor);
+    if (savedBranch) return savedBranch;
+  }
+
+  const normalizedHeading = normalizeAnnotationMatchText(annotation.heading);
+  if (!normalizedHeading) return null;
+  return branches.find((branch) => {
+    const heading = branch.querySelector(":scope > .report-heading");
+    const headingText = heading?.dataset.outlineText || heading?.querySelector(".outline-text")?.textContent || heading?.textContent;
+    return normalizeAnnotationMatchText(headingText) === normalizedHeading;
+  }) || null;
+}
+
+function findAnnotationAnchor(annotation) {
+  const section = document.getElementById(annotation.fileId);
+  if (!section) return null;
+
+  const savedBranch = findAnnotationBranch(section, annotation);
+  const searchRoot = savedBranch || section;
+  const blocks = Array.from(searchRoot.querySelectorAll("[data-md-start][data-md-end]"))
+    .filter((block) => !block.classList.contains("content-branch"));
+  const compactQuote = normalizeAnnotationMatchText(annotation.quote);
+
+  if (compactQuote) {
+    const quoteTarget = blocks.find((block) => normalizeAnnotationMatchText(block.textContent).includes(compactQuote));
+    if (quoteTarget) return quoteTarget;
+  }
+
+  const lineTarget = blocks.find((block) => {
+    const start = Number(block.dataset.mdStart);
+    const end = Number(block.dataset.mdEnd);
+    return start <= annotation.targetLine && end >= annotation.targetLine;
+  });
+  if (lineTarget) return lineTarget;
+
+  const heading = savedBranch?.querySelector(":scope > .report-heading");
+  if (heading) return heading;
+  const adjacentBlock = blocks.filter((block) => Number(block.dataset.mdEnd) < annotation.sourceStartLine).at(-1);
+  return adjacentBlock || section;
+}
+
+function appendAnnotationMarkdown(parent, markdown) {
+  const chunks = String(markdown || "").split(/\n{2,}/);
+  for (const chunk of chunks) {
+    if (!chunk.trim()) continue;
+    const paragraph = document.createElement("p");
+    appendInlineMarkdown(paragraph, chunk.replace(/\n/g, " "), {});
+    parent.appendChild(paragraph);
+  }
+}
+
+function getAnnotationTextNodes(anchor) {
+  const nodes = [];
+  const walker = document.createTreeWalker(anchor, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      return node.parentElement?.closest(".annotation-marker, .md-drag-handle")
+        ? NodeFilter.FILTER_REJECT
+        : NodeFilter.FILTER_ACCEPT;
+    }
+  });
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  return nodes;
+}
+
+function highlightAnnotationQuote(annotation) {
+  const anchor = annotation.anchorElement;
+  if (!anchor || !annotation.quote) return [];
+  const nodes = getAnnotationTextNodes(anchor);
+  const rawText = nodes.map((node) => node.data).join("");
+  const segments = new Map();
+  const exactStart = rawText.indexOf(annotation.quote);
+  if (exactStart >= 0) {
+    const exactEnd = exactStart + annotation.quote.length;
+    let cursor = 0;
+    for (const node of nodes) {
+      const nodeStart = cursor;
+      const nodeEnd = cursor + node.data.length;
+      cursor = nodeEnd;
+      const start = Math.max(exactStart, nodeStart);
+      const end = Math.min(exactEnd, nodeEnd);
+      if (start < end) segments.set(node, { start: start - nodeStart, end: end - nodeStart });
+    }
+  } else {
+    let normalized = "";
+    const positions = [];
+    const appendSpace = (position = null) => {
+      if (normalized && !normalized.endsWith(" ")) {
+        normalized += " ";
+        positions.push(position);
+      }
+    };
+    nodes.forEach((node, nodeIndex) => {
+      if (nodeIndex > 0) appendSpace();
+      for (let offset = 0; offset < node.data.length; offset += 1) {
+        if (/\s/.test(node.data[offset])) appendSpace({ node, offset });
+        else {
+          normalized += node.data[offset];
+          positions.push({ node, offset });
+        }
+      }
+    });
+    const normalizedQuote = annotation.quote.replace(/\s+/g, " ").trim();
+    const normalizedStart = normalized.indexOf(normalizedQuote);
+    if (normalizedStart < 0) return [];
+    for (const position of positions.slice(normalizedStart, normalizedStart + normalizedQuote.length)) {
+      if (!position) continue;
+      const segment = segments.get(position.node) || { start: position.offset, end: position.offset + 1 };
+      segment.start = Math.min(segment.start, position.offset);
+      segment.end = Math.max(segment.end, position.offset + 1);
+      segments.set(position.node, segment);
+    }
+  }
+  if (!segments.size) return [];
+
+  const highlights = [];
+  for (const node of nodes) {
+    const segment = segments.get(node);
+    if (!segment) continue;
+    node.splitText(segment.end);
+    const selected = node.splitText(segment.start);
+    const mark = document.createElement("mark");
+    mark.className = "annotation-highlight";
+    mark.dataset.annotationId = annotation.id;
+    selected.replaceWith(mark);
+    mark.appendChild(selected);
+    highlights.push(mark);
+  }
+  return highlights;
+}
+
+function activateAnnotation(annotation, { scrollToAnchor = false } = {}) {
+  for (const item of renderedAnnotations) {
+    const active = item === annotation;
+    item.cardElement?.classList.toggle("is-active", active);
+    item.markerElement?.classList.toggle("is-active", active);
+    for (const highlight of item.highlightElements || []) highlight.classList.toggle("is-active", active);
+  }
+  if (scrollToAnchor) {
+    annotation.anchorElement?.scrollIntoView({ behavior: "smooth", block: "center" });
+    scheduleAnnotationPositions();
+  }
+}
+
+function renderAnnotationDock() {
+  if (!annotationDock) return;
+  annotationDock.innerHTML = "";
+  annotationDock.hidden = renderedAnnotations.length === 0;
+  if (!renderedAnnotations.length) return;
+
+  const anchorCounts = new Map();
+  for (const annotation of renderedAnnotations) {
+    const anchor = findAnnotationAnchor(annotation);
+    annotation.anchorElement = anchor;
+
+    const card = document.createElement("article");
+    card.className = "annotation-card";
+    card.dataset.annotationId = annotation.id;
+    card.tabIndex = -1;
+    const header = document.createElement("div");
+    header.className = "annotation-card-header";
+    const actions = document.createElement("div");
+    actions.className = "annotation-card-actions";
+    const editButton = document.createElement("button");
+    editButton.type = "button";
+    editButton.textContent = "编辑";
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.textContent = "删除";
+    actions.append(editButton, deleteButton);
+    header.appendChild(actions);
+    const quote = document.createElement("div");
+    quote.className = "annotation-card-quote";
+    quote.textContent = annotation.quote;
+    const body = document.createElement("div");
+    body.className = "annotation-card-body";
+    appendAnnotationMarkdown(body, annotation.body);
+    card.append(header, quote, body);
+    annotationDock.appendChild(card);
+    annotation.cardElement = card;
+    annotation.highlightElements = highlightAnnotationQuote(annotation);
+    card.addEventListener("click", () => activateAnnotation(annotation, { scrollToAnchor: true }));
+    editButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      activateAnnotation(annotation);
+      openAnnotationDialog(null, annotation);
+    });
+    deleteButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      activateAnnotation(annotation);
+      if (!window.confirm("确定删除这条批注吗？此操作会修改当前 Markdown。")) return;
+      card.querySelectorAll("button").forEach((button) => button.disabled = true);
+      vscode?.postMessage({ type: "deleteAnnotation", annotationId: annotation.id });
+    });
+
+    if (anchor && anchor !== document.getElementById(annotation.fileId)) {
+      anchor.classList.add("has-annotation");
+      anchorCounts.set(anchor, (anchorCounts.get(anchor) || 0) + 1);
+    }
+  }
+
+  for (const [anchor, count] of anchorCounts) {
+    let marker = anchor.querySelector(":scope > .annotation-marker");
+    if (!marker) {
+      marker = document.createElement("button");
+      marker.type = "button";
+      marker.className = "annotation-marker";
+      marker.contentEditable = "false";
+      marker.addEventListener("click", () => {
+        const items = renderedAnnotations.filter((item) => item.anchorElement === anchor);
+        const activeIndex = items.findIndex((item) => item.cardElement?.classList.contains("is-active"));
+        const annotation = items[(activeIndex + 1) % items.length];
+        if (!annotation) return;
+        activateAnnotation(annotation);
+        annotation.cardElement?.focus();
+      });
+      anchor.appendChild(marker);
+    }
+    marker.textContent = "";
+    marker.dataset.label = count > 1 ? `批注 ${count}` : "批注";
+    marker.title = count > 1 ? `${count} 条批注` : "查看批注";
+    for (const annotation of renderedAnnotations.filter((item) => item.anchorElement === anchor)) {
+      annotation.markerElement = marker;
+    }
+  }
+  scheduleAnnotationPositions();
+}
+
+function requestAnnotationNormalization() {
+  if (!vscode || !renderedAnnotations.length) return;
+  const ids = renderedAnnotations.map((annotation) => annotation.id);
+  const key = ids.join("\n");
+  if (key === lastAnnotationNormalizationKey) return;
+  lastAnnotationNormalizationKey = key;
+  vscode.postMessage({ type: "normalizeAnnotations", annotationIds: ids });
+}
+
+function scheduleAnnotationPositions() {
+  if (!annotationDock || annotationDock.hidden || annotationPositionFrame) return;
+  annotationPositionFrame = window.requestAnimationFrame(() => {
+    annotationPositionFrame = null;
+    positionAnnotationCards();
+  });
+}
+
+function positionAnnotationCards() {
+  if (!annotationDock || annotationDock.hidden) return;
+  const dockRect = annotationDock.getBoundingClientRect();
+  const gap = 10;
+  let nextTop = Number.NEGATIVE_INFINITY;
+  for (const annotation of renderedAnnotations) {
+    const card = annotation.cardElement;
+    const anchor = annotation.anchorElement;
+    if (!card || !anchor) continue;
+    const anchorRect = anchor.getBoundingClientRect();
+    const desiredTop = anchorRect.top - dockRect.top;
+    const top = Math.max(desiredTop, nextTop);
+    card.hidden = false;
+    const cardHeight = card.offsetHeight;
+    card.style.top = `${Math.round(top)}px`;
+    card.hidden = top + cardHeight <= 0 || top >= dockRect.height;
+    nextTop = top + cardHeight + gap;
+  }
+}
+
+function parseAnnotationMeta(lines) {
+  const meta = {};
+  for (const line of lines) {
+    const match = /^([a-z_][a-z0-9_]*):\s*(.*)$/i.exec(String(line || "").trim());
+    if (!match) continue;
+    let value = match[2].trim();
+    try {
+      value = JSON.parse(value);
+    } catch {
+      // Keep unquoted metadata readable and forward-compatible.
+    }
+    meta[match[1].toLowerCase()] = value;
+  }
+  return meta;
+}
+
+function extractAnnotationBody(lines) {
+  const quoteLines = lines
+    .filter((line) => !/^\s*<!--/.test(line))
+    .map((line) => String(line || "").replace(/^\s*>\s?/, ""));
+  if (/^\*\*批注[：:]/.test(quoteLines[0] || "")) {
+    quoteLines.shift();
+  }
+  while (quoteLines[0] === "") quoteLines.shift();
+  while (quoteLines.at(-1) === "") quoteLines.pop();
+  return quoteLines.join("\n");
+}
+
 function preprocessMarkdownContent(content) {
   const footnotes = new Map();
+  const footnoteDefinitions = [];
+  const annotations = [];
   const bodyLines = [];
   const rawLines = normalizeMarkdownLines(content);
+  let inCode = false;
+  let openFence = null;
 
   for (let index = 0; index < rawLines.length; index += 1) {
     const line = rawLines[index];
+    const fence = parseCodeFenceLine(line);
+    if (fence) {
+      if (!inCode) {
+        inCode = true;
+        openFence = { char: fence.char, length: fence.length };
+      } else if (isCodeFenceClose(line, openFence)) {
+        inCode = false;
+        openFence = null;
+      }
+      bodyLines.push(line);
+      continue;
+    }
+
+    if (!inCode && /^\s*<!--\s*mr-annotation:start\s*$/.test(line)) {
+      let cursor = index + 1;
+      const metaLines = [];
+      while (cursor < rawLines.length && !/^\s*-->\s*$/.test(rawLines[cursor])) {
+        metaLines.push(rawLines[cursor]);
+        cursor += 1;
+      }
+      if (cursor < rawLines.length) cursor += 1;
+      const visibleLines = [];
+      while (cursor < rawLines.length && !/^\s*<!--\s*mr-annotation:end\s*-->\s*$/.test(rawLines[cursor])) {
+        visibleLines.push(rawLines[cursor]);
+        cursor += 1;
+      }
+      if (cursor < rawLines.length) {
+        const meta = parseAnnotationMeta(metaLines);
+        annotations.push({
+          id: String(meta.id || `annotation-${index + 1}`),
+          quote: String(meta.quote || ""),
+          heading: String(meta.heading || ""),
+          anchor: String(meta.anchor || ""),
+          createdAt: String(meta.created_at || ""),
+          targetLine: Number.isFinite(Number(meta.line_start)) ? Math.max(0, Number(meta.line_start) - 1) : Math.max(0, index - 1),
+          sourceStartLine: index,
+          sourceEndLine: cursor,
+          body: extractAnnotationBody(visibleLines),
+          rawMarkdown: rawLines.slice(index, cursor + 1).join("\n")
+        });
+        for (let hiddenIndex = index; hiddenIndex <= cursor; hiddenIndex += 1) bodyLines.push("");
+        index = cursor;
+        continue;
+      }
+    }
+
     const match = /^\[\^([^\]]+)\]:\s*(.*)$/.exec(String(line || "").trim());
     if (!match) {
       bodyLines.push(line);
@@ -2267,14 +2827,19 @@ function preprocessMarkdownContent(content) {
 
     const id = match[1].trim().toLowerCase();
     let text = match[2].trim();
+    const definitionLines = [line];
+    bodyLines.push("");
     while (index + 1 < rawLines.length && /^(?: {4,}|\t)/.test(rawLines[index + 1])) {
       index += 1;
       text += ` ${String(rawLines[index] || "").trim()}`;
+      definitionLines.push(rawLines[index]);
+      bodyLines.push("");
     }
     footnotes.set(id, text);
+    footnoteDefinitions.push(definitionLines.join("\n"));
   }
 
-  return { lines: bodyLines, footnotes };
+  return { lines: bodyLines, footnotes, footnoteDefinitions, annotations };
 }
 
 function parseBlockquote(lines, startIndex) {
@@ -2857,6 +3422,12 @@ function renderMarkdown(content, file) {
     footnoteIndex: new Map(),
     footnoteRefs: []
   };
+  renderedAnnotations.push(
+    ...preprocessed.annotations.map((annotation) => ({
+      ...annotation,
+      fileId: `doc-${slugify(file.name)}`
+    }))
+  );
   let paragraph = [];
   let paragraphStartLine = -1;
   let paragraphEndLine = -1;
