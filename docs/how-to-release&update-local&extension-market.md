@@ -1,6 +1,6 @@
 # 开发、打包、发布与更新
 
-本文是 **Meow Report Markdown Viewer** 仓库的开发者指南，说明从日常改代码、F5 调试，到本地安装 VSIX，再到发布到扩展商城及后续更新的完整流程。
+本文是 **Markdown Reader** 仓库的开发者指南，说明从日常改代码、F5 调试，到本地安装 VSIX，再到发布到扩展商城及后续更新的完整流程。
 
 适用于 **VS Code** 与 **Cursor**（两者扩展 API 相同，调试与打包命令一致）。
 
@@ -60,7 +60,7 @@ F5 会自动执行 `npm run compile`（见 `.vscode/launch.json` 中的 `preLaun
    - `docs/fixtures/cite-demo.md` — 引用跳转
    - `docs/fixtures/extended-markdown-demo.md` — 表格、代码块等
    - `docs/fixtures/tomodachi-cite-demo.md` — 综合示例
-2. 确认自动进入 **Meow Report Markdown Viewer** 阅读视图（默认开启 `meowReportMarkdown.autoOpenReaderMode`）
+2. 确认进入 **Markdown Reader** 阅读视图（是否自动打开由 `meowReportMarkdown.autoOpenReaderMode` 控制）
 3. 逐项检查：TOC、标题编号、`[cite:n]` 跳转、链接、滚动高亮等
 
 ### 2.3 改代码后如何刷新
@@ -91,11 +91,11 @@ F5 会自动执行 `npm run compile`（见 `.vscode/launch.json` 中的 `preLaun
 
 ## 3. 打包并在本地 Cursor / VS Code 安装
 
-F5 验证没问题后，再打包成 `.vsix` 安装到**日常使用的 Cursor**（而非 Extension Development Host）。
+F5 验证没问题后，再打包成 `.vsix` 安装到**日常使用的 Cursor / VS Code**（而非 Extension Development Host）。
 
 ### 3.0 一键打包（推荐）
 
-仓库根目录提供 GenData 风格脚本，**拖到终端回车**即可完成「编译 → 打 VSIX → 安装到 Cursor」：
+仓库根目录提供一键脚本，**拖到终端回车**即可完成「编译 → 打 VSIX → 安装到本机检测到的 Cursor / VS Code」：
 
 | 平台 | 操作 |
 |------|------|
@@ -107,16 +107,16 @@ F5 验证没问题后，再打包成 `.vsix` 安装到**日常使用的 Cursor**
 1. 自动 `cd` 到仓库根目录（与当前终端工作目录无关）
 2. 检查 `node` / `npm`；若无 `node_modules` 则执行 `npm install`
 3. `npm run package:local`（内部为 `compile` + `package`）
-4. 按 `package.json` 的 `name` + `version` 定位 VSIX（如 `markdown-reader-0.0.2.vsix`）
-5. 调用 Cursor CLI 执行 `--install-extension ... --force`
-6. 提示在 Cursor 中 **Developer: Reload Window**
+4. 按 `package.json` 的 `name` + `version` 定位 VSIX（当前为 `markdown-reader-0.0.4.vsix`）
+5. 调用检测到的 Cursor / VS Code CLI 执行 `--install-extension ... --force`
+6. 提示在对应编辑器中执行 **Developer: Reload Window**
 
-**Cursor CLI 查找顺序**
+**编辑器 CLI 查找顺序**
 
-- Windows：优先 `%LOCALAPPDATA%\Programs\cursor\resources\app\bin\cursor.cmd`，否则 PATH 中的 `cursor`
-- macOS：PATH 中的 `cursor`，否则 `/Applications/Cursor.app/Contents/Resources/app/bin/cursor`
+- Windows：分别查找 Cursor、VS Code 的常见安装目录，再查 PATH 中的 `cursor` / `code`
+- macOS：先查 PATH 中的 `cursor` / `code`，再回退到 `/Applications/Cursor.app/.../cursor` 与 `/Applications/Visual Studio Code.app/.../code`
 
-若脚本报「未找到 Cursor CLI」，在 Cursor 中执行 **Shell Command: Install 'cursor' command in PATH**，或确认上述路径存在。
+只找到一个编辑器时会继续安装并跳过另一个；两个 CLI 都找不到时脚本才会失败。可在编辑器中安装 Shell Command，或确认应用位于标准安装目录。
 
 Windows 脚本结束时会 `pause`，便于查看输出；macOS 脚本失败时以非零退出码结束。
 
@@ -139,7 +139,7 @@ npm run package
 
 > **说明**：本仓库 README 含相对路径链接（如 `docs/markdown_format_spec.md`），`vsce package` 默认会尝试改写链接并检测 git 仓库；若报错，使用上述两个 flag。正式发布前建议在 `package.json` 中补全 `repository` 字段，并添加 `CHANGELOG.md`。
 
-### 3.2 命令行安装（Cursor）
+### 3.2 命令行安装（Cursor / VS Code）
 
 macOS 上 Cursor CLI 通常不在 PATH 里，使用完整路径：
 
@@ -156,7 +156,13 @@ Windows 常见路径：
   --install-extension ".\markdown-reader-<version>.vsix" --force
 ```
 
-`--force` 用于覆盖已安装的同版本扩展。安装后执行 **Developer: Reload Window** 重载 Cursor。
+`--force` 用于覆盖已安装的同版本扩展。安装后执行 **Developer: Reload Window** 重载编辑器。
+
+VS Code 可使用：
+
+```bash
+code --install-extension ./markdown-reader-<version>.vsix --force
+```
 
 验证是否安装成功：
 
@@ -180,7 +186,7 @@ cursor --list-extensions --show-versions | grep markdown-reader
 
 ## 4. 发布到扩展商城
 
-本地 VSIX 自测通过后，再对外发布。本扩展当前 `publisher` 为 **`meow-agent`**，扩展 ID 为 **`meow-agent.meow-report-markdown-viewer`**。
+本地 VSIX 自测通过后，再对外发布。本扩展当前 `publisher` 为 **`humensmoc`**，扩展 ID 为 **`humensmoc.markdown-reader`**。
 
 ### 4.1 两个渠道的区别
 
@@ -194,13 +200,13 @@ cursor --list-extensions --show-versions | grep markdown-reader
 ### 4.2 首次发布前准备
 
 1. **Publisher 账号**
-   - VS Code：[marketplace.visualstudio.com/manage](https://marketplace.visualstudio.com/manage) 创建 Publisher，ID 必须与 `package.json` 的 `publisher` 一致（`meow-agent`），创建后不可改
+   - VS Code：[marketplace.visualstudio.com/manage](https://marketplace.visualstudio.com/manage) 创建 Publisher，ID 必须与 `package.json` 的 `publisher` 一致（`humensmoc`），创建后不可改
    - Open VSX：注册 [open-vsx.org](https://open-vsx.org/)，签署 Publisher Agreement，创建 namespace
 
 2. **认证**
    ```bash
    # VS Code Marketplace（Azure DevOps PAT，范围 Marketplace Manage）
-   npx vsce login meow-agent
+   npx vsce login humensmoc
 
    # Open VSX（Settings → Access Tokens）
    export OVSX_PAT="your-token"
@@ -229,8 +235,8 @@ npx ovsx publish -p $OVSX_PAT
 上架后 Marketplace 索引约 5–15 分钟。验证地址：
 
 ```text
-https://marketplace.visualstudio.com/items?itemName=meow-agent.meow-report-markdown-viewer
-https://open-vsx.org/extension/meow-agent/meow-report-markdown-viewer
+https://marketplace.visualstudio.com/items?itemName=humensmoc.markdown-reader
+https://open-vsx.org/extension/humensmoc/markdown-reader
 ```
 
 ---
@@ -256,7 +262,7 @@ cursor --install-extension ./markdown-reader-<version>.vsix --force
 # 1. 更新 CHANGELOG.md
 # 2. 自动 bump patch 版本并发布
 npx vsce publish patch
-# 或指定版本：npx vsce publish 0.0.2
+# 或指定版本：npx vsce publish 0.0.4
 ```
 
 已安装用户会在扩展视图看到 **Update**，或随自动更新策略升级。
@@ -330,10 +336,10 @@ npx vsce package --allow-missing-repository --no-rewrite-relative-links
 & 'C:\Program Files\nodejs\npm.cmd' run compile
 ```
 
-### Q7：一键打包脚本找不到 Cursor？
+### Q7：一键打包脚本找不到 Cursor / VS Code？
 
 - Windows：确认 `%LOCALAPPDATA%\Programs\cursor\resources\app\bin\cursor.cmd` 存在，或在 Cursor 中安装 Shell Command
-- macOS：确认 `/Applications/Cursor.app` 已安装，或执行 **Shell Command: Install 'cursor' command in PATH**
+- macOS：确认 Cursor / VS Code 位于 `/Applications`，或安装对应的 `cursor` / `code` Shell Command
 - 仍失败时，用 **Extensions: Install from VSIX...** 手动选择生成的 `.vsix`
 
 ---

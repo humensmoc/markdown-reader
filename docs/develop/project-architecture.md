@@ -1,4 +1,4 @@
-# Meow Report Markdown Viewer — 项目架构与运行流程
+# Markdown Reader — 项目架构与运行流程
 
 > 喵～这份文档用 **Mermaid（美人鱼）语法** 画架构图，帮你一眼看懂：插件怎么跑起来、模块怎么互相牵手、Markdown 怎么变成页面、以及「点一下会发生什么」。
 
@@ -92,7 +92,7 @@ sequenceDiagram
     EXT->>EXT: markReaderIntent(uri)
     EXT->>VS: vscode.openWith(uri, viewer)
   else 手动打开
-    U->>VS: 右键 → Open with Meow Report Markdown Viewer
+    U->>VS: 右键 → Open with Markdown Reader
     VS->>EXT: meowReportMarkdown.openPreview
     EXT->>EXT: markReaderIntent + openInReaderMode()
   end
@@ -395,7 +395,7 @@ flowchart LR
 
 本地开发：`npm install` → `npm run compile` → F5 **Run Extension** → 在新窗口打开 `docs/fixtures/cite-demo.md` 验收。
 
-本地打包安装：F5 通过后运行根目录 **`Package.bat`**（Windows）或 **`Package.sh`**（macOS），一键完成 compile → VSIX → 安装到 Cursor；详见 [how-to-release&update-local&extension-market.md](../how-to-release&update-local&extension-market.md#30-一键打包推荐)。
+本地打包安装：F5 通过后运行根目录 **`Package.bat`**（Windows）或 **`Package.sh`**（macOS），一键完成 compile → VSIX → 安装到检测到的 Cursor / VS Code；详见 [how-to-release&update-local&extension-market.md](../how-to-release&update-local&extension-market.md#30-一键打包推荐)。
 
 ---
 
