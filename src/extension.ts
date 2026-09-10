@@ -1093,8 +1093,15 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     ].join("\n");
 
     const currentContent = document.getText();
+    const isFirstAnnotation = !/^\s*<!--\s*mr-annotation:start\s*$/m.test(currentContent);
+    const aiGuide = [
+      "<!-- mr-annotation:ai-guide",
+      "AI 操作指南：处理 status 为 open 的批注。按要求修改正文；在原批注元数据写入 change_quote（修改后第一处可精确匹配的正文，多处只记第一处），并在批注末尾添加 **AI 回复：** 和改动简述。保留批注，不要替用户解决。",
+      "-->"
+    ].join("\n");
+    const annotationPayload = isFirstAnnotation ? `${aiGuide}\n\n${entry}` : entry;
     const insertAt = document.positionAt(currentContent.length);
-    const insertion = `${currentContent.endsWith("\n") ? "\n" : "\n\n"}${entry}\n`;
+    const insertion = `${currentContent.endsWith("\n") ? "\n" : "\n\n"}${annotationPayload}\n`;
     const edit = new vscode.WorkspaceEdit();
     edit.insert(document.uri, insertAt, insertion);
     const applied = await vscode.workspace.applyEdit(edit);

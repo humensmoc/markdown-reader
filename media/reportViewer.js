@@ -1748,7 +1748,9 @@ function serializeDocumentMarkdown() {
   const body = chunks.filter((chunk) => chunk.trim()).join("\n\n");
   const footnotes = preprocessed.footnoteDefinitions.join("\n\n");
   const annotations = preprocessed.annotations.map((annotation) => annotation.rawMarkdown).filter(Boolean).join("\n\n");
-  return [preprocessed.frontmatter, body, footnotes, annotations].filter((part) => part.trim()).join("\n\n");
+  return [preprocessed.frontmatter, body, footnotes, preprocessed.annotationGuide, annotations]
+    .filter((part) => part.trim())
+    .join("\n\n");
 }
 
 function createMdDragHandle() {
@@ -3122,6 +3124,7 @@ function preprocessMarkdownContent(content) {
   const footnoteDefinitions = [];
   const annotations = [];
   const bodyLines = [];
+  let annotationGuide = "";
   const sourceLines = String(content || "").split(/\r?\n/);
   const frontmatter = extractObsidianFrontmatter(sourceLines);
   const rawLines = normalizeMarkdownLines(content);
@@ -3147,6 +3150,17 @@ function preprocessMarkdownContent(content) {
       }
       bodyLines.push(line);
       continue;
+    }
+
+    if (!inCode && /^\s*<!--\s*mr-annotation:ai-guide\s*$/.test(line)) {
+      let cursor = index + 1;
+      while (cursor < rawLines.length && !/^\s*-->\s*$/.test(rawLines[cursor])) cursor += 1;
+      if (cursor < rawLines.length) {
+        if (!annotationGuide) annotationGuide = rawLines.slice(index, cursor + 1).join("\n");
+        for (let hiddenIndex = index; hiddenIndex <= cursor; hiddenIndex += 1) bodyLines.push("");
+        index = cursor;
+        continue;
+      }
     }
 
     if (!inCode && /^\s*<!--\s*mr-annotation:start\s*$/.test(line)) {
@@ -3213,6 +3227,7 @@ function preprocessMarkdownContent(content) {
     footnotes,
     footnoteDefinitions,
     annotations,
+    annotationGuide,
     frontmatter: frontmatter?.rawMarkdown || "",
     frontmatterFields: parseObsidianFrontmatter(frontmatter?.rawMarkdown || "")
   };
