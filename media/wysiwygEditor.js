@@ -80,9 +80,28 @@
     return { start, end };
   }
 
+  function readingMarkup(node) {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent;
+    if (node.nodeType !== Node.ELEMENT_NODE) return "";
+    if (node.classList.contains("footnote-ref")) return `[^${node.dataset.footnoteId}]`;
+    const value = [...node.childNodes].map(readingMarkup).join("");
+    if (node.matches("mark.reading-native-highlight")) return `==${value}==`;
+    if (node.matches("strong, b")) return `**${value}**`;
+    if (node.matches("em, i")) return `*${value}*`;
+    if (node.matches("del, s")) return `~~${value}~~`;
+    if (node.matches("code")) return "`" + value + "`";
+    if (node.matches("a")) return `[${value}](${node.getAttribute("href")})`;
+    if (node.matches("br")) return "\n";
+    return value;
+  }
+
   function getBlockPlainText(block) {
     if (!block) {
       return "";
+    }
+    if (block.querySelector("mark.reading-native-highlight, .footnote-ref")) {
+      const target = block.querySelector(".outline-text, .list-body") || block;
+      return readingMarkup(target);
     }
     if (block.classList.contains("report-heading")) {
       return block.querySelector(".outline-text")?.textContent || "";
@@ -172,7 +191,7 @@
   function extractTableMarkdown(block) {
     const rows = [];
     for (const tr of block.querySelectorAll("tr")) {
-      const cells = Array.from(tr.children).map((cell) => cell.textContent.trim());
+      const cells = Array.from(tr.children).map((cell) => (cell.querySelector("mark.reading-native-highlight, .footnote-ref") ? readingMarkup(cell) : cell.textContent).trim());
       rows.push(`| ${cells.join(" | ")} |`);
     }
     if (rows.length >= 2) {
@@ -356,7 +375,7 @@
       if (!block) {
         return;
       }
-      commitBlockEdit(block, { forceFullText: node.textContent || "" });
+      commitBlockEdit(block, { forceFullText: getBlockPlainText(block) });
     });
   }
 
@@ -404,7 +423,7 @@
       }
       quote.dataset.wysiwygBound = "1";
       quote.setAttribute("contenteditable", "true");
-      quote.addEventListener("blur", () => commitBlockEdit(quote, { forceFullText: quote.textContent || "" }));
+      quote.addEventListener("blur", () => commitBlockEdit(quote, { forceFullText: getBlockPlainText(quote) }));
     }
   }
 

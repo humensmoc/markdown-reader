@@ -15,6 +15,7 @@
 - 表格、代码块、Mermaid、粗体、斜体、行内代码与 Obsidian 笔记属性渲染
 - `[cite: n]` 引用跳转与返回原文（正文只显示蓝色数字；来源行以 `[cite source]` 标记，见 [格式规范](docs/markdown_format_spec.md)）
 - 所见即所得编辑、Markdown 块拖拽，以及保存回原文件
+- 划词高亮：正文 `==高亮==`、可选脚注评论、悬停预览与点击编辑，可在 Obsidian 阅读
 - 内嵌批注：正文定位、上下条导航、AI 回复高亮、解决归档，数据保存在当前 Markdown 中
 
 ### 安装
@@ -45,18 +46,38 @@
 - **批注**：选中正文后添加批注；AI 修改正文后，与批注相关的所有改动都会直接在正文中高亮，批注卡片会区分用户问题和 AI 回复；解决后的批注继续留在 Markdown 文末，并可从右下角“已解决批注”按钮查看
 - **链接**：`http` / `https` / `mailto` 走系统浏览器；相对 `.md` 在编辑器内打开；`#anchor` 在 webview 内跳转；危险协议（如 `javascript:`）会被拦截
 
+#### 划词高亮与阅读评论
+
+在阅读模式选中文字，快速点击笔形按钮即可高亮；悬停约 350ms，或点击“评论”，可填写可选评论。Enter 保存、Shift+Enter 换行、Esc 取消，输入法选字不会触发保存。点击已有高亮可修改评论或删除。
+
+从 0.0.6 起，新高亮直接保存为正文 `==文字==`，评论保存为对应脚注。没有评论时不生成脚注；Obsidian 可使用其原生高亮与脚注语法显示。新标记统一使用黄色，不再记录自定义颜色。例如：
+
+```markdown
+这是一段==重要内容==[^mark1]。
+
+[^mark1]: 之后再看
+```
+
+可直接打开 [高亮与脚注示例](docs/fixtures/highlights-demo.md) 试用。阅读器也识别手写的高亮和紧跟高亮（或一个标点之后）的脚注。删除高亮会保留正文，并清理仅被该高亮引用的评论脚注；被其他地方引用的脚注保留。
+
+旧版 `<!-- mr-highlight {...} -->` 仍能读取，打开文档不会自动改写。编辑旧高亮并保存时，仅将该条转换为新格式；无法准确定位时保留原数据并提示。旧版重叠高亮不适合嵌套 `==...==`，转换冲突时需先调整选区。
+
+高亮支持单行内的普通文字、完整格式片段和表格单元格；跨行、跨段或跨越部分格式边界时会提示重新选择，避免破坏 Markdown。拖拽排序和所见即所得编辑会保留新格式。阅读评论不进入 AI 待处理队列，需要 AI 修改正文时使用“AI 批注”。
+
 #### AI 批注回写格式
 
 Markdown Reader 不绑定某一家 AI。AI 或自动化工具修改正文后，应保留批注块，并在修改前后对照确认实际改动。在元数据的 `change_quotes` JSON 字符串数组中，逐项记录所有与该批注直接相关、且能在修改后正文中精确匹配的改动。不要记录未变化的上下文或无关的顺手调整。改动简述追加在 `AI 回复` 下；旧版单值 `change_quote` 仍然兼容：
 
-每次新增批注时，阅读器都会检查 AI 操作指南是否存在；如果缺少，就把隐藏指南插入正文与第一条批注之间，已有指南不会重复写入。
+批注状态为 `open`（待处理）、`pending_review`（待验收）、`resolved`（已解决）。AI 只处理 `open`，完成本轮修改、更新 `change_quotes` 和 `AI 回复` 后，将状态设为 `pending_review`；未完成时保留 `open` 并说明原因。AI 不得写入 `resolved` 或 `resolved_at`，待验收和已解决批注不主动处理。
+
+每次新增或编辑批注时，阅读器都会补充缺失的隐藏 AI 操作指南，或将已有指南升级到当前版本，不重复添加。仅打开旧文档不会改写文件。
 
 ```markdown
 <!-- mr-annotation:start
 id: "annotation-20260910120000000"
 quote: "用户最初选中的内容"
 created_at: "2026-09-10T04:00:00.000Z"
-status: "open"
+status: "pending_review"
 change_quotes: ["第一处相关改动正文", "第二处相关改动正文"]
 -->
 > **批注：用户最初选中的内容**
@@ -69,7 +90,9 @@ change_quotes: ["第一处相关改动正文", "第二处相关改动正文"]
 <!-- mr-annotation:end -->
 ```
 
-阅读器会逐项匹配并高亮 `change_quotes` 中的正文，并兼容表格行、列表、标题和常见行内 Markdown 语法。点击“解决”后会写入 `status: "resolved"` 和 `resolved_at`；批注块不删除，也不会作为普通正文渲染。
+阅读器会逐项匹配并高亮 `change_quotes` 中的正文，并兼容表格行、列表、标题和常见行内 Markdown 语法。待验收批注显示橙色边框，仍计入未解决数量。验收有问题时，点击“编辑”，补充要求并将状态改回“待处理（open）”；保留上次 AI 回复供参考，但不再显示待验收样式。AI 再次处理时应更新本轮改动和回复；写入 `change_quotes` 时移除旧 `change_quote`，避免高亮过期内容。
+
+点击“确认解决”后会写入 `status: "resolved"` 和 `resolved_at`；批注块不删除，也不会作为普通正文渲染。状态仍存储在 Markdown 中，这套流程依赖外部 AI 遵守操作指南，不校验修改者身份。
 
 ### 常见问题
 
@@ -127,7 +150,7 @@ cursor --install-extension ./markdown-reader-<version>.vsix --force
 code --install-extension ./markdown-reader-<version>.vsix --force
 ```
 
-`<version>` 见 `package.json`（当前生成 `markdown-reader-0.0.4.vsix`）。若 CLI 不在 PATH，请换成本机 CLI 路径，或用 **Extensions: Install from VSIX...** 图形安装。
+`<version>` 见 `package.json`（当前生成 `markdown-reader-0.0.6.vsix`）。若 CLI 不在 PATH，请换成本机 CLI 路径，或用 **Extensions: Install from VSIX...** 图形安装。
 
 #### 对外发版（摘要）
 
@@ -250,7 +273,7 @@ cursor --install-extension ./markdown-reader-<version>.vsix --force
 code --install-extension ./markdown-reader-<version>.vsix --force
 ```
 
-See `version` in `package.json` (currently produces `markdown-reader-0.0.4.vsix`). If a CLI is not in PATH, use its full local path or install through **Extensions: Install from VSIX...**.
+See `version` in `package.json` (currently produces `markdown-reader-0.0.6.vsix`). If a CLI is not in PATH, use its full local path or install through **Extensions: Install from VSIX...**.
 
 #### Public release (summary)
 

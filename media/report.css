@@ -36,6 +36,8 @@
   --muted: var(--vscode-descriptionForeground);
   --blue: #519aba;
   --blue-soft: color-mix(in srgb, #519aba 14%, transparent);
+  --comment: light-dark(#8051ac, #c39aeb);
+  --comment-soft: color-mix(in srgb, var(--comment) 16%, transparent);
   --mermaid-bg: color-mix(in srgb, var(--vscode-editor-background) 92%, #000 8%);
   --mermaid-surface: color-mix(in srgb, var(--vscode-sideBar-background) 84%, var(--vscode-editor-background) 16%);
   --mermaid-border: color-mix(in srgb, var(--vscode-panel-border) 72%, var(--vscode-editor-foreground) 12%);
@@ -44,6 +46,14 @@
   --scroll-track: color-mix(in srgb, var(--vscode-editor-foreground) 12%, transparent);
   --scroll-thumb: color-mix(in srgb, var(--vscode-editor-foreground) 35%, transparent);
   --scroll-thumb-hover: color-mix(in srgb, var(--vscode-editor-foreground) 50%, transparent);
+}
+
+body.vscode-dark, body.vscode-high-contrast {
+  --comment: #c39aeb;
+}
+
+body.vscode-light, body.vscode-high-contrast-light {
+  --comment: #8051ac;
 }
 
 * {
@@ -967,6 +977,18 @@ s {
   font-weight: 700;
 }
 
+.report-content .footnote-ref a.cite-ref {
+  color: var(--comment);
+  background: var(--comment-soft);
+}
+
+.report-content .footnote-ref a.cite-ref:hover,
+.report-content .footnote-ref a.cite-ref:focus-visible,
+.report-content .footnote-ref a.cite-ref.cite-active {
+  color: var(--comment);
+  background: color-mix(in srgb, var(--comment) 28%, transparent);
+}
+
 .footnotes {
   margin-top: 28px;
   padding-top: 8px;
@@ -1331,7 +1353,9 @@ body.mermaid-modal-open {
 
 .mermaid-modal-viewport {
   flex: 1;
-  overflow: auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1352,6 +1376,7 @@ body.mermaid-modal-open {
 }
 
 .mermaid-modal-content {
+  flex: none;
   transform-origin: center center;
   transition: transform 0.12s ease;
 }
@@ -1761,14 +1786,14 @@ body.editor-mode .annotation-dock {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--blue) 35%, transparent), var(--shadow);
 }
 
-.annotation-card.has-ai-reply {
+.annotation-card.is-pending-review {
   border: 3px solid #f59e0b;
   background: color-mix(in srgb, #f59e0b 6%, var(--paper-strong));
   box-shadow: 0 0 0 1px color-mix(in srgb, #f59e0b 42%, transparent), var(--shadow);
 }
 
-.annotation-card.has-ai-reply:focus,
-.annotation-card.has-ai-reply.is-active {
+.annotation-card.is-pending-review:focus,
+.annotation-card.is-pending-review.is-active {
   border-color: #f59e0b;
   box-shadow: 0 0 0 2px color-mix(in srgb, #f59e0b 55%, transparent), var(--shadow);
 }
@@ -1776,7 +1801,19 @@ body.editor-mode .annotation-dock {
 .annotation-card-header {
   display: flex;
   min-height: 20px;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.annotation-card-status {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.annotation-card.is-pending-review .annotation-card-status {
+  color: var(--text);
+  font-weight: 600;
 }
 
 .annotation-card-actions {
@@ -2002,7 +2039,8 @@ body.wysiwyg-mode .annotation-marker {
   font-weight: 600;
 }
 
-.annotation-dialog-card textarea {
+.annotation-dialog-card textarea,
+.annotation-dialog-card select {
   width: 100%;
   resize: vertical;
   padding: 10px;
@@ -2015,8 +2053,26 @@ body.wysiwyg-mode .annotation-marker {
   line-height: 1.5;
 }
 
-.annotation-dialog-card textarea:focus {
+.annotation-dialog-card textarea:focus,
+.annotation-dialog-card select:focus {
   border-color: var(--blue);
+}
+
+.annotation-dialog-card select {
+  margin-top: 0;
+  padding: 6px;
+  resize: none;
+}
+
+.annotation-dialog-card textarea + label {
+  margin-top: 12px;
+}
+
+.annotation-status-help {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .annotation-dialog-actions {
@@ -2526,8 +2582,27 @@ body.wysiwyg-mode .annotation-marker {
 
 .cite-hover-title {
   font-weight: 600;
-  color: var(--ink);
+  color: var(--text);
   margin-bottom: 4px;
+}
+
+.footnote-hover-popover {
+  border-color: var(--comment);
+  width: min(360px, calc(100vw - 24px));
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+}
+
+.footnote-hover-popover .cite-hover-title {
+  color: var(--comment);
+}
+
+.footnote-hover-popover .cite-hover-summary {
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: min(240px, calc(100vh - 100px));
+  margin-bottom: 0;
 }
 
 .cite-hover-summary {
@@ -2580,7 +2655,7 @@ body.wysiwyg-mode .annotation-marker {
   border: 1px solid var(--line-strong);
   border-radius: 6px;
   background: var(--paper);
-  color: var(--ink);
+  color: var(--text);
   padding: 4px 10px;
   cursor: pointer;
 }
@@ -2596,7 +2671,7 @@ body.wysiwyg-mode .annotation-marker {
   border: 1px solid var(--line-strong);
   border-radius: 6px;
   background: var(--paper);
-  color: var(--ink);
+  color: var(--text);
   padding: 8px 10px;
   cursor: pointer;
 }
@@ -2615,3 +2690,41 @@ body.wysiwyg-mode [contenteditable="true"]:focus {
   outline-color: color-mix(in srgb, var(--blue) 45%, transparent);
   background: color-mix(in srgb, var(--blue-soft) 35%, transparent);
 }
+
+/* Local reading highlights (independent of AI annotations). */
+::highlight(reader-yellow) { background-color: #ffe68b; color: #262015; }
+::highlight(reader-green) { background-color: #8adbad; color: #142c20; }
+::highlight(reader-blue) { background-color: #82c9ff; color: #14283b; }
+::highlight(reader-pink) { background-color: #f3a4c7; color: #341827; }
+::highlight(reader-purple) { background-color: #c2abf5; color: #241737; }
+.annotation-action { display: flex; align-items: center; gap: 2px; padding: 3px; }
+.annotation-action > button { border: 0; border-radius: 4px; padding: 5px 8px; background: transparent; color: inherit; cursor: pointer; font: inherit; }
+.annotation-action > button:hover, .annotation-action > button:focus-visible { background: var(--line); }
+.annotation-action .reading-highlight-quick { display: flex; color: var(--blue); }
+.reading-highlight-panel, .reading-highlight-tooltip {
+  position: fixed; z-index: 1200; box-sizing: border-box; width: 310px;
+  max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow: auto;
+  padding: 14px; border: 1px solid var(--line-strong); border-radius: 10px;
+  background: var(--paper-strong); color: var(--text); box-shadow: 0 8px 30px #0003;
+  font: 13px/1.5 var(--body-font, sans-serif);
+}
+.reading-highlight-panel { display: flex; flex-direction: column; gap: 10px; }
+.reading-highlight-panel blockquote { margin: 0; padding: 6px 9px; border-left: 3px solid var(--line-strong); max-height: 76px; overflow: auto; overflow-wrap: anywhere; color: var(--muted); }
+.reading-highlight-panel textarea { box-sizing: border-box; width: 100%; min-height: 72px; resize: vertical; border: 1px solid var(--line-strong); border-radius: 5px; padding: 8px; background: var(--paper); color: inherit; font: inherit; }
+.reading-highlight-panel button { cursor: pointer; border: 1px solid var(--line-strong); border-radius: 5px; padding: 5px 9px; color: inherit; background: var(--paper); font: inherit; overflow-wrap: anywhere; }
+.reading-highlight-panel button:disabled { opacity: .5; cursor: wait; }
+.reading-highlight-panel button:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+.reading-highlight-colors { display: flex; gap: 12px; padding: 3px; }
+.reading-highlight-colors button { width: 27px; height: 27px; padding: 0; border-radius: 50%; border: 1px solid #0003; }
+.reading-highlight-colors button[aria-pressed=true] { outline: 2px solid var(--text); outline-offset: 3px; }
+.reading-highlight-colors [data-color=yellow] { background: #ffe68b; }
+.reading-highlight-colors [data-color=green] { background: #8adbad; }
+.reading-highlight-colors [data-color=blue] { background: #82c9ff; }
+.reading-highlight-colors [data-color=pink] { background: #f3a4c7; }
+.reading-highlight-colors [data-color=purple] { background: #c2abf5; }
+.reading-highlight-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.reading-highlight-actions [data-action=save] { background: var(--blue); color: white; }
+.reading-highlight-tooltip { width: max-content; max-width: min(360px, calc(100vw - 16px)); white-space: pre-wrap; overflow-wrap: anywhere; pointer-events: none; }
+
+mark.reading-native-highlight { background: #ffe68b; color: #262015; border-radius: 2px; cursor: pointer; }
+.reading-highlight-format { color: var(--muted); font-size: 12px; }

@@ -2,7 +2,7 @@
   "name": "markdown-reader",
   "displayName": "Markdown Reader",
   "description": "Read and edit Markdown with a floating TOC, citations, Obsidian properties, persistent styles, and inline AI-friendly annotations.",
-  "version": "0.0.4",
+  "version": "0.0.6",
   "publisher": "humensmoc",
   "engines": {
     "vscode": "^1.90.0"
@@ -66,6 +66,8 @@
     "copy-mermaid": "node -e \"require('fs').copyFileSync('node_modules/mermaid/dist/mermaid.min.js','media/mermaid.min.js')\"",
     "compile": "tsc -p ./ && npm run copy-mermaid",
     "verify-frontmatter": "node scripts/verify-frontmatter.js",
+    "verify-annotations": "node scripts/verify-annotations.js",
+    "verify-highlights": "node scripts/verify-reading-highlights.js",
     "watch": "tsc -watch -p ./",
     "package": "vsce package --allow-missing-repository --no-rewrite-relative-links --skip-license",
     "package:local": "npm run compile && npm run package"

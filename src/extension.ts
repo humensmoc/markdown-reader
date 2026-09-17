@@ -1,8 +1,10 @@
 import * as path from "path";
 import * as vscode from "vscode";
+import { updateReadingHighlight, type HighlightMessage } from "./readingHighlights";
 import { buildReportPayload } from "./reportData";
 
 type ViewerMessage =
+  | HighlightMessage
   | { type: "ready" }
   | { type: "requestReaderSettings" }
   | { type: "requestReaderStyle" }
@@ -21,7 +23,7 @@ type ViewerMessage =
       heading?: string;
       anchor?: string;
     }
-  | { type: "updateAnnotation"; annotationId?: string; comment?: string }
+  | { type: "updateAnnotation"; annotationId?: string; comment?: string; status?: "open" | "pending_review" }
   | { type: "resolveAnnotation"; annotationId?: string }
   | { type: "deleteAnnotation"; annotationId?: string }
   | { type: "normalizeAnnotations"; annotationIds?: string[] }
@@ -34,6 +36,17 @@ const readerIntentUris = new Set<string>();
 const openInReaderModeInflight = new Map<string, Promise<void>>();
 const extensionActivatedAt = Date.now();
 const STARTUP_GRACE_MS = 1200;
+
+function buildAnnotationAiGuide(eol: string): string {
+  return [
+    "<!-- mr-annotation:ai-guide",
+    'AI 操作指南：批注状态为 open（待处理）、pending_review（待验收）、resolved（已解决）。只处理 status 为 open 的批注；pending_review 等待用户验收，resolved 已归档，不要主动处理。',
+    '按最新批注要求修改正文后，对比修改前后的内容；在原批注元数据写入 change_quotes JSON 字符串数组，逐项记录所有与该批注要求直接相关的实际新增或改写正文。每一项都应能在修改后正文中精确匹配，并包含足够上下文以便唯一定位；不要填写未改动的上下文、原批注选文或无关调整。旧版 change_quote 字段仍可读取；写入 change_quotes 时移除旧 change_quote，避免高亮过期内容。',
+    '在批注末尾的 **AI 回复：** 下说明本轮改动，然后将 status 改为 "pending_review"。未完成处理时保持 "open" 并说明原因。禁止将 status 写成 "resolved" 或写入 resolved_at；只有用户点击“确认解决”才表示验收通过。保留批注 ID、原始选文和用户批注。',
+    '用户验收不通过时，会在编辑批注中补充要求并将 status 改回 "open"。已有 AI 回复仅作为上轮参考；按最新要求重新处理，更新 change_quotes 和 AI 回复以反映本轮结果，完成后再次设为 "pending_review"。',
+    "-->"
+  ].join(eol);
+}
 
 type ReaderStyleSettings = {
   bodyFontSize: number;
@@ -856,6 +869,21 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         return;
       }
 
+      if (message.type === "saveReadingHighlight" || message.type === "deleteReadingHighlight") {
+        try {
+          const content = document.getText();
+          const next = updateReadingHighlight(content, message);
+          const edit = new vscode.WorkspaceEdit();
+          edit.replace(document.uri, new vscode.Range(document.positionAt(0), document.positionAt(content.length)), next);
+          if (!await vscode.workspace.applyEdit(edit)) throw new Error("无法更新当前 Markdown。");
+          if (!await document.save()) throw new Error("高亮已写入编辑器，但文件尚未保存到磁盘。");
+          await postToWebview({ type: "readingHighlightSaved" });
+        } catch (error) {
+          await postToWebview({ type: "readingHighlightError", message: error instanceof Error ? error.message : String(error) });
+        }
+        return;
+      }
+
       if (message.type === "addAnnotation") {
         try {
           await this.insertAnnotation(document, message);
@@ -1097,11 +1125,7 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     const aiGuideMatch = /^[ \t]*<!--\s*mr-annotation:ai-guide\s*$[\s\S]*?^[ \t]*-->[ \t]*$/m.exec(currentContent);
     const hasAiGuide = Boolean(aiGuideMatch);
     const firstAnnotationMatch = /^[ \t]*<!--\s*mr-annotation:start\s*$/m.exec(currentContent);
-    const aiGuide = [
-      "<!-- mr-annotation:ai-guide",
-      "AI 操作指南：处理 status 为 open 的批注。按要求修改正文后，对比修改前后的内容；在原批注元数据写入 change_quotes JSON 字符串数组，逐项记录所有与该批注要求直接相关的实际新增或改写正文。每一项都应能在修改后正文中精确匹配，并包含足够上下文以便唯一定位；不要填写未改动的上下文、原批注选文或与该批注无关的顺手调整。随后在批注末尾添加 **AI 回复：**，说明完成了哪些改动。保留批注，不要替用户解决。旧版 change_quote 字段仍可读取。",
-      "-->"
-    ].join(eol);
+    const aiGuide = buildAnnotationAiGuide(eol);
     const entryForDocument = eol === "\n" ? entry : entry.replace(/\n/g, eol);
     const insertAt = document.positionAt(currentContent.length);
     const edit = new vscode.WorkspaceEdit();
@@ -1173,9 +1197,25 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     document: vscode.TextDocument,
     startOffset: number,
     endOffset: number,
-    replacement: string
+    replacement: string,
+    refreshAiGuide = false
   ): Promise<void> {
     const edit = new vscode.WorkspaceEdit();
+    if (refreshAiGuide) {
+      const content = document.getText();
+      const eol = content.includes("\r\n") ? "\r\n" : "\n";
+      const guide = buildAnnotationAiGuide(eol);
+      const guideMatch = /^[ \t]*<!--\s*mr-annotation:ai-guide\s*$[\s\S]*?^[ \t]*-->[ \t]*$/m.exec(content);
+      if (guideMatch && guideMatch[0] !== guide) {
+        edit.replace(document.uri, new vscode.Range(
+          document.positionAt(guideMatch.index),
+          document.positionAt(guideMatch.index + guideMatch[0].length)
+        ), guide);
+      } else if (!guideMatch) {
+        // Keep the new guide next to the edited annotation, after any frontmatter.
+        replacement = `${guide}${eol}${eol}${replacement}`;
+      }
+    }
     edit.replace(
       document.uri,
       new vscode.Range(document.positionAt(startOffset), document.positionAt(endOffset)),
@@ -1194,6 +1234,9 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     const annotationId = String(message.annotationId || "").trim();
     const comment = String(message.comment || "").trim();
     if (!annotationId || !comment) throw new Error("批注 ID 和批注内容不能为空。");
+    if (message.status !== undefined && message.status !== "open" && message.status !== "pending_review") {
+      throw new Error("编辑批注只能设为待处理或待验收；请使用“确认解决”完成验收。");
+    }
     const content = document.getText();
     const block = this.findAnnotationBlock(content, annotationId);
     if (!block) throw new Error("没有在当前 Markdown 中找到这条批注。");
@@ -1208,15 +1251,25 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     const visibleBlock = content.slice(block.metaEnd, block.end);
     const replyMatch = /(?:\r?\n)>\s*\*\*AI\s*回复[：:]?\*\*[\s\S]*?(?=(?:\r?\n)?<!--\s*mr-annotation:end\s*-->)/i.exec(visibleBlock);
     const preservedReply = replyMatch ? replyMatch[0].replace(/^\r?\n/, "") : "";
+    let metadataText = content.slice(block.start, block.metaEnd);
+    if (message.status !== undefined) {
+      metadataText = metadataText.replace(/(?:\r?\n)?-->$/, "");
+      const statusLine = `status: ${JSON.stringify(message.status)}`;
+      metadataText = /^[ \t]*status:/im.test(metadataText)
+        ? metadataText.replace(/^[ \t]*status:[^\r\n]*/gim, statusLine)
+        : `${metadataText}${eol}${statusLine}`;
+      metadataText = metadataText.replace(/^[ \t]*resolved_at:[^\r\n]*(?:\r?\n|$)/gim, "");
+      metadataText = `${metadataText}${eol}-->`;
+    }
     const replacement = [
-      content.slice(block.start, block.metaEnd),
+      metadataText,
       `> **批注：${quoteLabel}${compactQuote.length > 80 ? "…" : ""}**`,
       ">",
       quotedComment,
       ...(preservedReply ? [">", preservedReply] : []),
       "<!-- mr-annotation:end -->"
     ].join(eol);
-    await this.replaceAnnotationRange(document, block.start, block.end, replacement);
+    await this.replaceAnnotationRange(document, block.start, block.end, replacement, true);
   }
 
   private async deleteAnnotation(
@@ -1393,6 +1446,12 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     const wysiwygUri = webview
       .asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "wysiwygEditor.js"))
       .with({ query: `v=${cacheKey}` });
+    const highlightsUri = webview
+      .asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "readerHighlights.js"))
+      .with({ query: `v=${cacheKey}` });
+    const highlightFormatUri = webview
+      .asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "highlightFormat.js"))
+      .with({ query: `v=${cacheKey}` });
     const nonce = cacheKey;
 
     return `<!doctype html>
@@ -1508,6 +1567,8 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     </div>
   </div>
   <script nonce="${nonce}" src="${mermaidUri}"></script>
+  <script nonce="${nonce}" src="${highlightFormatUri}"></script>
+  <script nonce="${nonce}" src="${highlightsUri}"></script>
   <script nonce="${nonce}" src="${jsUri}"></script>
   <script nonce="${nonce}" src="${wysiwygUri}"></script>
 </body>

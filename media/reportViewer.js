@@ -228,7 +228,7 @@ window.addEventListener("message", (event) => {
     showAnnotationToast("已将批注整理到 Markdown 文末");
   }
   if (message?.type === "annotationError") {
-    annotationDialog?.querySelectorAll("button, textarea").forEach((element) => element.disabled = false);
+    annotationDialog?.querySelectorAll("button, textarea, select").forEach((element) => element.disabled = false);
     annotationDialog?.querySelector("textarea")?.focus();
     annotationDock?.querySelectorAll(".annotation-card button").forEach((element) => element.disabled = false);
     showAnnotationToast(`批注保存失败：${message.message || "未知错误"}`, true);
@@ -264,6 +264,7 @@ document.addEventListener("mousedown", handleMermaidModalDragStart);
 document.addEventListener("mousemove", handleMermaidModalDragMove);
 document.addEventListener("mouseup", handleMermaidModalDragEnd);
 document.addEventListener("keydown", handleMermaidModalKeydown);
+window.addEventListener("resize", fitMermaidModalContent);
 
 if (vscode) {
   requestReaderSettings();
@@ -859,7 +860,9 @@ function ensureCiteHoverPopover() {
 function hideCiteHoverPopover() {
   window.clearTimeout(citeHoverShowTimer);
   window.clearTimeout(citeHoverHideTimer);
+  citeHoverActiveRef?.removeAttribute("aria-describedby");
   citeHoverActiveRef = null;
+  citeHoverPointerInPopover = false;
   if (citeHoverPopover) {
     citeHoverPopover.hidden = true;
     citeHoverPopover.innerHTML = "";
@@ -876,14 +879,25 @@ function scheduleHideCiteHoverPopover() {
 }
 
 function showCiteHoverPopover(citeRef) {
+  const isFootnote = Boolean(citeRef?.closest(".footnote-ref"));
   const sourceId = citeRef?.dataset?.sourceTarget;
-  const preview = sourceId ? citeSourcePreviewIndex.get(sourceId) : null;
+  let preview = sourceId ? citeSourcePreviewIndex.get(sourceId) : null;
+  if (isFootnote) {
+    const item = document.getElementById(citeRef.dataset.anchor);
+    if (!item) return;
+    const content = item.cloneNode(true);
+    content.querySelectorAll(".footnote-backref").forEach((back) => back.remove());
+    preview = { title: `评论 ${citeRef.textContent}`, summary: content.textContent.trim(), links: [] };
+  }
   if (!preview) {
     return;
   }
 
   const popover = ensureCiteHoverPopover();
+  citeHoverActiveRef?.removeAttribute("aria-describedby");
   citeHoverActiveRef = citeRef;
+  citeRef.setAttribute("aria-describedby", popover.id);
+  popover.classList.toggle("footnote-hover-popover", isFootnote);
 
   const titleEl = document.createElement("div");
   titleEl.className = "cite-hover-title";
@@ -947,9 +961,10 @@ function initCiteHover() {
     return;
   }
 
-  reportContent.addEventListener("mouseover", (event) => {
-    const citeRef = event.target.closest("button.cite-ref");
-    if (!citeRef || citeRef.closest(".source-line")) {
+  const selector = "button.cite-ref, .footnote-ref a";
+  const show = (event) => {
+    const citeRef = event.target.closest(selector);
+    if (!citeRef || citeRef.closest(".source-line") || document.body.matches(".editor-mode, .wysiwyg-mode")) {
       return;
     }
     window.clearTimeout(citeHoverHideTimer);
@@ -960,10 +975,10 @@ function initCiteHover() {
     citeHoverShowTimer = window.setTimeout(() => {
       showCiteHoverPopover(citeRef);
     }, 200);
-  });
+  };
 
-  reportContent.addEventListener("mouseout", (event) => {
-    const citeRef = event.target.closest("button.cite-ref");
+  const hide = (event) => {
+    const citeRef = event.target.closest(selector);
     if (!citeRef || citeRef.closest(".source-line")) {
       return;
     }
@@ -973,6 +988,20 @@ function initCiteHover() {
     }
     window.clearTimeout(citeHoverShowTimer);
     scheduleHideCiteHoverPopover();
+  };
+  reportContent.addEventListener("mouseover", show);
+  reportContent.addEventListener("focusin", show);
+  reportContent.addEventListener("mouseout", hide);
+  reportContent.addEventListener("focusout", hide);
+  reportContent.addEventListener("click", (event) => {
+    if (event.target.closest(selector)) hideCiteHoverPopover();
+  });
+  window.addEventListener("resize", hideCiteHoverPopover);
+  window.addEventListener("scroll", (event) => {
+    if (!citeHoverPopover?.contains(event.target)) hideCiteHoverPopover();
+  }, true);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") hideCiteHoverPopover();
   });
 }
 
@@ -1185,7 +1214,7 @@ function formatOutlineNumber(number) {
   return outline.includes(".") ? `${outline} ` : `${outline}. `;
 }
 
-function setOutlineLabel(element, outlineNumber, text, scope) {
+function setOutlineLabel(element, outlineNumber, text, scope, context = {}) {
   const foldButton = element.querySelector(":scope > .content-fold");
   element.dataset.outlineNumber = String(outlineNumber || "");
   element.dataset.outlineText = String(text || "");
@@ -1202,13 +1231,15 @@ function setOutlineLabel(element, outlineNumber, text, scope) {
 
     const textSpan = document.createElement("span");
     textSpan.className = "outline-text";
-    textSpan.textContent = label;
+    if (scope === "content") appendInlineMarkdown(textSpan, label, context);
+    else textSpan.textContent = label.replace(/==/g, "");
 
     element.append(numberSpan, textSpan);
   } else {
     const textSpan = document.createElement("span");
     textSpan.className = "outline-text";
-    textSpan.textContent = label;
+    if (scope === "content") appendInlineMarkdown(textSpan, label, context);
+    else textSpan.textContent = label.replace(/==/g, "");
     element.appendChild(textSpan);
   }
 
@@ -1756,7 +1787,7 @@ function serializeDocumentMarkdown() {
   const body = chunks.filter((chunk) => chunk.trim()).join("\n\n");
   const footnotes = preprocessed.footnoteDefinitions.join("\n\n");
   const annotations = preprocessed.annotations.map((annotation) => annotation.rawMarkdown).filter(Boolean).join("\n\n");
-  return [preprocessed.frontmatter, body, footnotes, preprocessed.annotationGuide, annotations]
+  return [preprocessed.frontmatter, body, footnotes, preprocessed.annotationGuide, annotations, preprocessed.readingHighlights.join("\n")]
     .filter((part) => part.trim())
     .join("\n\n");
 }
@@ -2075,6 +2106,7 @@ function renderReport(payload) {
   }
   toc.appendChild(tocInner);
   renderAnnotationDock();
+  window.ReaderHighlights?.render(preprocessMarkdownContent(latestDocumentText).readingHighlights, latestDocumentText);
   requestAnnotationNormalization();
   updateActiveToc();
   void hydrateMermaid(reportContent);
@@ -2351,7 +2383,7 @@ function getSelectionElement(node) {
 }
 
 function getAnnotationSelection() {
-  if (document.body.classList.contains("editor-mode") || annotationDialog) {
+  if (document.body.classList.contains("editor-mode") || document.body.classList.contains("wysiwyg-mode") || annotationDialog || window.ReaderHighlights?.isOpen()) {
     return null;
   }
   const selection = window.getSelection();
@@ -2390,17 +2422,36 @@ function ensureAnnotationAction() {
   if (annotationAction) {
     return annotationAction;
   }
-  const button = document.createElement("button");
-  button.type = "button";
+  const button = document.createElement("div");
   button.className = "annotation-action";
-  button.textContent = "添加批注";
   button.hidden = true;
   button.addEventListener("mousedown", (event) => event.preventDefault());
-  button.addEventListener("click", () => {
-    if (pendingAnnotationSelection) {
-      openAnnotationDialog(pendingAnnotationSelection);
-    }
+  const highlight = document.createElement("button");
+  highlight.type = "button";
+  highlight.className = "reading-highlight-quick";
+  highlight.title = "点击高亮；悬停添加评论";
+  highlight.setAttribute("aria-label", "高亮选中文字");
+  highlight.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="m14 3 7 7-10 10H4v-7L14 3Zm-8 11 4 4m1-12 7 7M3 22h18" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
+  let hoverTimer;
+  highlight.addEventListener("mouseenter", () => {
+    hoverTimer = window.setTimeout(() => window.ReaderHighlights?.compose(), 350);
   });
+  highlight.addEventListener("mouseleave", () => window.clearTimeout(hoverTimer));
+  highlight.addEventListener("click", () => {
+    window.clearTimeout(hoverTimer);
+    window.ReaderHighlights?.quickSave();
+  });
+  const comment = document.createElement("button");
+  comment.type = "button";
+  comment.textContent = "评论";
+  comment.addEventListener("click", () => window.ReaderHighlights?.compose());
+  const ai = document.createElement("button");
+  ai.type = "button";
+  ai.textContent = "AI 批注";
+  ai.addEventListener("click", () => {
+    if (pendingAnnotationSelection) openAnnotationDialog(pendingAnnotationSelection);
+  });
+  button.append(highlight, comment, ai);
   document.body.appendChild(button);
   annotationAction = button;
   return button;
@@ -2413,6 +2464,7 @@ function updateAnnotationAction() {
     return;
   }
   pendingAnnotationSelection = info;
+  window.ReaderHighlights?.captureSelection();
   const button = ensureAnnotationAction();
   button.hidden = false;
   const left = Math.min(window.innerWidth - button.offsetWidth - 12, Math.max(12, info.rect.left + info.rect.width / 2 - button.offsetWidth / 2));
@@ -2452,6 +2504,12 @@ function openAnnotationDialog(info, annotation = null) {
       <div class="annotation-quote"></div>
       <label for="annotationComment">批注内容</label>
       <textarea id="annotationComment" rows="6" placeholder="写下你的批注…"></textarea>
+      ${editing ? `<label for="annotationStatus">批注状态</label>
+      <select id="annotationStatus">
+        <option value="open">待处理（open）</option>
+        <option value="pending_review">待验收（pending_review）</option>
+      </select>
+      <p class="annotation-status-help">验收有问题时，补充批注并改回“待处理”，交给 AI 再次修改。</p>` : ""}
       <div class="annotation-dialog-actions">
         <button type="button" data-action="cancel">取消</button>
         <button type="button" class="primary" data-action="save">${editing ? "保存修改" : "添加批注"}</button>
@@ -2461,6 +2519,8 @@ function openAnnotationDialog(info, annotation = null) {
   const textarea = overlay.querySelector("textarea");
   const saveButton = overlay.querySelector('[data-action="save"]');
   textarea.value = editing ? annotation.body : "";
+  const statusSelect = overlay.querySelector("#annotationStatus");
+  if (statusSelect) statusSelect.value = annotation.status === "pending_review" ? "pending_review" : "open";
   overlay.querySelector('[data-action="cancel"]').addEventListener("click", closeAnnotationDialog);
   overlay.addEventListener("mousedown", (event) => {
     if (event.target === overlay) closeAnnotationDialog();
@@ -2472,7 +2532,7 @@ function openAnnotationDialog(info, annotation = null) {
       return;
     }
     if (editing) {
-      vscode?.postMessage({ type: "updateAnnotation", annotationId: annotation.id, comment });
+      vscode?.postMessage({ type: "updateAnnotation", annotationId: annotation.id, comment, status: statusSelect.value });
     } else {
       vscode?.postMessage({
         type: "addAnnotation",
@@ -2484,7 +2544,7 @@ function openAnnotationDialog(info, annotation = null) {
         anchor: info.anchor
       });
     }
-    overlay.querySelectorAll("button, textarea").forEach((element) => element.disabled = true);
+    overlay.querySelectorAll("button, textarea, select").forEach((element) => element.disabled = true);
   });
   textarea.addEventListener("keydown", (event) => {
     if (event.key !== "Enter" || event.shiftKey || event.isComposing || event.keyCode === 229) {
@@ -2821,12 +2881,15 @@ function renderAnnotationDock() {
 
     const card = document.createElement("article");
     card.className = "annotation-card";
-    const hasAiResponse = Boolean(String(annotation.reply || "").trim() || annotation.changeQuotes.length);
-    card.classList.toggle("has-ai-reply", hasAiResponse);
+    card.classList.toggle("is-pending-review", annotation.status === "pending_review");
     card.dataset.annotationId = annotation.id;
     card.tabIndex = -1;
     const header = document.createElement("div");
     header.className = "annotation-card-header";
+    const statusLabel = document.createElement("span");
+    statusLabel.className = "annotation-card-status";
+    statusLabel.textContent = annotation.status === "pending_review" ? "待验收" : "待处理";
+    header.appendChild(statusLabel);
     const actions = document.createElement("div");
     actions.className = "annotation-card-actions";
     const editButton = document.createElement("button");
@@ -2856,7 +2919,7 @@ function renderAnnotationDock() {
     const resolveButton = document.createElement("button");
     resolveButton.type = "button";
     resolveButton.className = "annotation-resolve-button";
-    resolveButton.textContent = "解决";
+    resolveButton.textContent = "确认解决";
     card.appendChild(resolveButton);
     annotationDock.appendChild(card);
     annotation.cardElement = card;
@@ -3242,6 +3305,7 @@ function preprocessMarkdownContent(content) {
   const footnotes = new Map();
   const footnoteDefinitions = [];
   const annotations = [];
+  const readingHighlights = [];
   const bodyLines = [];
   let annotationGuide = "";
   const sourceLines = String(content || "").split(/\r?\n/);
@@ -3268,6 +3332,12 @@ function preprocessMarkdownContent(content) {
         openFence = null;
       }
       bodyLines.push(line);
+      continue;
+    }
+
+    if (!inCode && /^<!-- mr-highlight (\{.*\}) -->$/.test(line)) {
+      readingHighlights.push(line);
+      bodyLines.push("");
       continue;
     }
 
@@ -3352,6 +3422,7 @@ function preprocessMarkdownContent(content) {
     footnoteDefinitions,
     annotations,
     annotationGuide,
+    readingHighlights,
     frontmatter: frontmatter?.rawMarkdown || "",
     frontmatterFields: parseObsidianFrontmatter(frontmatter?.rawMarkdown || "")
   };
@@ -3705,6 +3776,7 @@ function renderFootnoteRef(id, context) {
 
   const sup = document.createElement("sup");
   sup.className = "footnote-ref";
+  sup.dataset.footnoteId = id;
   const link = document.createElement("a");
   link.href = `#fn-${context.fileKey}-${number}`;
   link.id = `fnref-${context.fileKey}-${number}`;
@@ -4071,11 +4143,11 @@ function renderMarkdown(content, file) {
       const cleanText = numberedHeading?.cleanText || stripOutlinePrefix(rawText);
       const outlineNumber = numberedHeading?.outlineNumber;
       if (outlineNumber) {
-        setOutlineLabel(h, outlineNumber, cleanText, "content");
+        setOutlineLabel(h, outlineNumber, cleanText, "content", context);
       } else {
         const textSpan = document.createElement("span");
         textSpan.className = "outline-text";
-        textSpan.textContent = cleanText;
+        appendInlineMarkdown(textSpan, cleanText, context);
         h.appendChild(textSpan);
       }
       h.id = numberedHeading?.anchor || makeFallbackAnchor(file.name, headingIndex, cleanText);
@@ -4321,7 +4393,6 @@ function showMermaidError(block, source, err) {
 
 let mermaidModalState = null;
 const MERMAID_MODAL_SCALE_MIN = 0.4;
-const MERMAID_MODAL_SCALE_MAX = 4;
 
 function ensureMermaidModal() {
   if (document.getElementById("mermaidModal")) {
@@ -4371,7 +4442,11 @@ function openMermaidModal(block) {
   }
 
   content.replaceChildren(svgRoot.cloneNode(true));
+  const viewBox = svgRoot.viewBox.baseVal;
+  const bounds = svgRoot.getBoundingClientRect();
   mermaidModalState = {
+    width: viewBox.width || bounds.width,
+    height: viewBox.height || bounds.height,
     scale: 1,
     offsetX: 0,
     offsetY: 0,
@@ -4381,8 +4456,9 @@ function openMermaidModal(block) {
     dragOriginX: 0,
     dragOriginY: 0
   };
-  applyMermaidModalTransform();
   modal.hidden = false;
+  fitMermaidModalContent();
+  applyMermaidModalTransform();
   document.body.classList.add("mermaid-modal-open");
   modal.querySelector('[data-mermaid-action="close"]')?.focus();
 }
@@ -4402,6 +4478,24 @@ function closeMermaidModal() {
   mermaidModalState = null;
 }
 
+function fitMermaidModalContent() {
+  const modal = ensureMermaidModalOpen();
+  const viewport = modal?.querySelector(".mermaid-modal-viewport");
+  const svg = modal?.querySelector(".mermaid-modal-content > svg");
+  if (!viewport || !svg || !mermaidModalState.width || !mermaidModalState.height) {
+    return;
+  }
+
+  const style = getComputedStyle(viewport);
+  const width = viewport.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  const height = viewport.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+  const fit = Math.min(1, Math.max(1, width) / mermaidModalState.width, Math.max(1, height) / mermaidModalState.height);
+  // Give percentage-sized Mermaid SVGs a stable, fitted size before transforming.
+  svg.style.width = `${mermaidModalState.width * fit}px`;
+  svg.style.height = `${mermaidModalState.height * fit}px`;
+  svg.style.maxWidth = "none";
+}
+
 function applyMermaidModalTransform() {
   if (!mermaidModalState) {
     return;
@@ -4419,15 +4513,15 @@ function applyMermaidModalTransform() {
   viewport.classList.toggle("is-dragging", mermaidModalState.isDragging);
 }
 
-function updateMermaidModalScale(nextScale) {
-  if (!mermaidModalState) {
+function updateMermaidModalScale(nextScale, anchorX = 0, anchorY = 0) {
+  if (!mermaidModalState || !Number.isFinite(nextScale)) {
     return;
   }
-  mermaidModalState.scale = Math.min(MERMAID_MODAL_SCALE_MAX, Math.max(MERMAID_MODAL_SCALE_MIN, nextScale));
-  if (Math.abs(mermaidModalState.scale - 1) < 0.001) {
-    mermaidModalState.offsetX = 0;
-    mermaidModalState.offsetY = 0;
-  }
+  const scale = Math.max(MERMAID_MODAL_SCALE_MIN, nextScale);
+  const ratio = scale / mermaidModalState.scale;
+  mermaidModalState.offsetX = anchorX + (mermaidModalState.offsetX - anchorX) * ratio;
+  mermaidModalState.offsetY = anchorY + (mermaidModalState.offsetY - anchorY) * ratio;
+  mermaidModalState.scale = scale;
   applyMermaidModalTransform();
 }
 
@@ -4466,8 +4560,12 @@ function handleMermaidModalWheel(event) {
   if (!Number.isFinite(delta) || delta === 0) {
     return;
   }
-  const step = delta < 0 ? 0.12 : -0.12;
-  updateMermaidModalScale((mermaidModalState?.scale || 1) + step);
+  const bounds = viewport.getBoundingClientRect();
+  const style = getComputedStyle(viewport);
+  const centerX = bounds.left + viewport.clientWidth / 2 + (parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)) / 2;
+  const centerY = bounds.top + viewport.clientHeight / 2 + (parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)) / 2;
+  const factor = delta < 0 ? 1.12 : 1 / 1.12;
+  updateMermaidModalScale(mermaidModalState.scale * factor, event.clientX - centerX, event.clientY - centerY);
 }
 
 function handleMermaidModalDragStart(event) {
@@ -4550,9 +4648,9 @@ function handleMermaidModalClick(event) {
   }
 
   if (action === "zoom-in") {
-    updateMermaidModalScale(mermaidModalState.scale + 0.2);
+    updateMermaidModalScale(mermaidModalState.scale * 1.2);
   } else if (action === "zoom-out") {
-    updateMermaidModalScale(mermaidModalState.scale - 0.2);
+    updateMermaidModalScale(mermaidModalState.scale / 1.2);
   } else if (action === "zoom-reset") {
     resetMermaidModalTransform();
   }
@@ -4702,6 +4800,17 @@ function appendInlineMarkdown(parent, text, context = {}) {
 function renderInlineMarkdown(text, context = {}) {
   const fragment = document.createDocumentFragment();
   const value = String(text || "");
+  const highlightData = window.ReaderHighlightFormat?.parse(value);
+  const outerHighlight = highlightData?.marks.find((mark) => !highlightData.wrappers.some((wrapper) => !wrapper.highlight && wrapper.start < mark.start && wrapper.end > mark.end));
+  if (outerHighlight) {
+    fragment.appendChild(renderInlineMarkdown(value.slice(0, outerHighlight.start), context));
+    const mark = document.createElement("mark");
+    mark.className = "reading-native-highlight";
+    mark.appendChild(renderInlineMarkdown(value.slice(outerHighlight.inside, outerHighlight.insideEnd), context));
+    fragment.appendChild(mark);
+    fragment.appendChild(renderInlineMarkdown(value.slice(outerHighlight.end), context));
+    return fragment;
+  }
   let cursor = 0;
 
   while (cursor < value.length) {
@@ -4887,13 +4996,18 @@ function appendInlineText(parent, text) {
 function appendInlineFormatting(parent, text) {
   const value = String(text || "");
   if (!value) return;
-  const parts = value.split(/(`[^`]+`|\*\*[^*]+\*\*|\*[^*\s][^*]*\*|~~[^~]+~~)/g);
+  const parts = value.split(/(`[^`]+`|(?<!\\)==(?=\S)[^\n]+?==|\*\*[^*]+\*\*|\*[^*\s][^*]*\*|~~[^~]+~~)/g);
   for (const part of parts) {
     if (!part) continue;
     if (part.startsWith("`") && part.endsWith("`") && part.length > 1) {
       const code = document.createElement("code");
       code.textContent = part.slice(1, -1);
       parent.appendChild(code);
+    } else if (part.startsWith("==") && part.endsWith("==") && part.length > 4) {
+      const mark = document.createElement("mark");
+      mark.className = "reading-native-highlight";
+      appendInlineFormatting(mark, part.slice(2, -2));
+      parent.appendChild(mark);
     } else if (part.startsWith("**") && part.endsWith("**") && part.length > 3) {
       const strong = document.createElement("strong");
       appendInlineFormatting(strong, part.slice(2, -2));
