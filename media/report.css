@@ -934,8 +934,8 @@ p {
 .markdown-blockquote {
   margin: 14px 0;
   padding: 10px 14px;
-  border-left: 4px solid var(--blue);
-  background: color-mix(in srgb, var(--blue) 8%, transparent);
+  border-left: 4px solid #fff;
+  background: transparent;
   color: var(--text);
 }
 
@@ -2728,3 +2728,18 @@ body.wysiwyg-mode [contenteditable="true"]:focus {
 
 mark.reading-native-highlight { background: #ffe68b; color: #262015; border-radius: 2px; cursor: pointer; }
 .reading-highlight-format { color: var(--muted); font-size: 12px; }
+.reader-math { color: inherit; }
+.reader-math-inline { display: inline; }
+.reader-math-display {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.5em 0;
+  margin: 0.8em 0;
+}
+.reader-math-display .katex-display { margin: 0; padding: 0.25em 0; }
+.reader-math-display .katex-display > .katex { text-align: left; }
+.reader-math .katex { font-size: 1.1em; text-indent: 0; }
+.reader-math-error { font-family: var(--vscode-editor-font-family, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }

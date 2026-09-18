@@ -1,14 +1,22 @@
-export type ReadingHighlight = {
-  id: string;
+export type HighlightSelection = {
   exact: string;
   prefix: string;
   suffix: string;
+  lineStart?: number;
+  lineEnd?: number;
+  cellIndex?: number;
+  blockText?: string;
+  textStart?: number;
+  textEnd?: number;
+};
+
+export type ReadingHighlight = HighlightSelection & {
+  id: string;
   occurrences: number;
   color: string;
   comment: string;
   nativeStart?: number;
-  lineStart?: number;
-  lineEnd?: number;
+  segments?: HighlightSelection[];
 };
 
 export type HighlightMessage = {
@@ -27,6 +35,18 @@ function validate(value: ReadingHighlight): void {
       !Number.isSafeInteger(value.occurrences) || value.occurrences < 1 ||
       !["yellow", "green", "blue", "pink", "purple"].includes(value.color)) {
     throw new Error("高亮数据无效，请重新选择文字。");
+  }
+  if (value.segments !== undefined) {
+    if (!Array.isArray(value.segments) || !value.segments.length || value.segments.length > 10000 ||
+        value.segments.some((s) => !s || typeof s.exact !== "string" || !s.exact.trim() ||
+          typeof s.prefix !== "string" || typeof s.suffix !== "string" ||
+          typeof s.blockText !== "string" || s.blockText.length > 1000000 ||
+          !Number.isSafeInteger(s.lineStart) || s.lineStart! < 0 || !Number.isSafeInteger(s.lineEnd) || s.lineEnd! < s.lineStart! ||
+          !Number.isSafeInteger(s.textStart) || !Number.isSafeInteger(s.textEnd) || s.textStart! < 0 ||
+          s.textEnd! <= s.textStart! || s.textEnd! > s.blockText.length ||
+          (s.cellIndex !== undefined && (!Number.isSafeInteger(s.cellIndex) || s.cellIndex < 0)))) {
+      throw new Error("高亮选区数据无效，请重新选择文字。");
+    }
   }
 }
 

@@ -83,6 +83,7 @@
   function readingMarkup(node) {
     if (node.nodeType === Node.TEXT_NODE) return node.textContent;
     if (node.nodeType !== Node.ELEMENT_NODE) return "";
+    if (node.matches(".reader-math[data-math-source]")) return node.dataset.mathSource;
     if (node.classList.contains("footnote-ref")) return `[^${node.dataset.footnoteId}]`;
     const value = [...node.childNodes].map(readingMarkup).join("");
     if (node.matches("mark.reading-native-highlight")) return `==${value}==`;
@@ -99,7 +100,7 @@
     if (!block) {
       return "";
     }
-    if (block.querySelector("mark.reading-native-highlight, .footnote-ref")) {
+    if (block.querySelector("mark.reading-native-highlight, .footnote-ref, .reader-math")) {
       const target = block.querySelector(".outline-text, .list-body") || block;
       return readingMarkup(target);
     }
@@ -191,12 +192,11 @@
   function extractTableMarkdown(block) {
     const rows = [];
     for (const tr of block.querySelectorAll("tr")) {
-      const cells = Array.from(tr.children).map((cell) => (cell.querySelector("mark.reading-native-highlight, .footnote-ref") ? readingMarkup(cell) : cell.textContent).trim());
+      const cells = Array.from(tr.children).map((cell) => (cell.querySelector("mark.reading-native-highlight, .footnote-ref, .reader-math") ? readingMarkup(cell) : cell.textContent).trim());
       rows.push(`| ${cells.join(" | ")} |`);
     }
     if (rows.length >= 2) {
-      const separator = `| ${Array.from(rows[0].matchAll(/[^|]+/g))
-        .slice(1, -1)
+      const separator = `| ${Array.from(block.querySelector("tr").children)
         .map(() => "---")
         .join(" | ")} |`;
       rows.splice(1, 0, separator);

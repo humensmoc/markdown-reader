@@ -62,7 +62,11 @@
 
 旧版 `<!-- mr-highlight {...} -->` 仍能读取，打开文档不会自动改写。编辑旧高亮并保存时，仅将该条转换为新格式；无法准确定位时保留原数据并提示。旧版重叠高亮不适合嵌套 `==...==`，转换冲突时需先调整选区。
 
-高亮支持单行内的普通文字、完整格式片段和表格单元格；跨行、跨段或跨越部分格式边界时会提示重新选择，避免破坏 Markdown。拖拽排序和所见即所得编辑会保留新格式。阅读评论不进入 AI 待处理队列，需要 AI 修改正文时使用“AI 批注”。
+从 0.0.8 起，可一次选中多行正文、多段文字、列表、引用或多个表格单元格并高亮。阅读器按源码行、单元格和格式边界自动拆分，保留首尾的精确选区、表格分隔符、列表编号和原有换行；显示时的自动折行不影响高亮。一次保存统一写入，撤销一次即可还原整批标记。已有高亮和评论保持原样，只补上未高亮的部分。
+
+批量高亮添加评论时，各片段共用一条脚注；重新打开文档后，点击任一片段修改评论会同步整组，删除高亮只取消当前片段。清空共享评论会取消整组评论，保留各片段高亮。公式和代码块暂不参与高亮，跨过这些内容选择时会提示已跳过；行内代码需完整选中。表格拖选按实际文字选区处理，不会自动扩大为整列。
+
+拖拽排序和所见即所得编辑会保留新格式。阅读评论不进入 AI 待处理队列，需要 AI 修改正文时使用“AI 批注”。
 
 #### AI 批注回写格式
 
@@ -93,6 +97,14 @@ change_quotes: ["第一处相关改动正文", "第二处相关改动正文"]
 阅读器会逐项匹配并高亮 `change_quotes` 中的正文，并兼容表格行、列表、标题和常见行内 Markdown 语法。待验收批注显示橙色边框，仍计入未解决数量。验收有问题时，点击“编辑”，补充要求并将状态改回“待处理（open）”；保留上次 AI 回复供参考，但不再显示待验收样式。AI 再次处理时应更新本轮改动和回复；写入 `change_quotes` 时移除旧 `change_quote`，避免高亮过期内容。
 
 点击“确认解决”后会写入 `status: "resolved"` 和 `resolved_at`；批注块不删除，也不会作为普通正文渲染。状态仍存储在 Markdown 中，这套流程依赖外部 AI 遵守操作指南，不校验修改者身份。
+
+### 数学公式
+
+从 0.0.7 起，内置 KaTeX 和字体，离线支持 LaTeX 数学公式：行内使用 `$...$` 或 `\(...\)`，独立公式使用 `$$...$$` 或 `\[...\]`，独立公式可以跨多行。支持分式、矩阵、积分、求和及 `aligned` 等 KaTeX 支持的数学语法。
+
+公式也可放在列表、引用和表格单元格中。代码块与行内代码不渲染公式；转义美元 `\$` 保持原样。错误或不支持的公式保留源码，悬停可查看原因。长公式在自身区域横向滚动。
+
+所见即所得模式中公式作为不可拆分的只读内容，编辑周围文字后保存仍保留原始 LaTeX。修改公式本身请使用右下角“编辑”打开源码编辑器。示例见 [公式示例](docs/fixtures/math-demo.md)。
 
 ### 常见问题
 
@@ -150,7 +162,7 @@ cursor --install-extension ./markdown-reader-<version>.vsix --force
 code --install-extension ./markdown-reader-<version>.vsix --force
 ```
 
-`<version>` 见 `package.json`（当前生成 `markdown-reader-0.0.6.vsix`）。若 CLI 不在 PATH，请换成本机 CLI 路径，或用 **Extensions: Install from VSIX...** 图形安装。
+`<version>` 见 `package.json`（当前生成 `markdown-reader-0.0.8.vsix`）。若 CLI 不在 PATH，请换成本机 CLI 路径，或用 **Extensions: Install from VSIX...** 图形安装。
 
 #### 对外发版（摘要）
 
@@ -273,7 +285,7 @@ cursor --install-extension ./markdown-reader-<version>.vsix --force
 code --install-extension ./markdown-reader-<version>.vsix --force
 ```
 
-See `version` in `package.json` (currently produces `markdown-reader-0.0.6.vsix`). If a CLI is not in PATH, use its full local path or install through **Extensions: Install from VSIX...**.
+See `version` in `package.json` (currently produces `markdown-reader-0.0.8.vsix`). If a CLI is not in PATH, use its full local path or install through **Extensions: Install from VSIX...**.
 
 #### Public release (summary)
 

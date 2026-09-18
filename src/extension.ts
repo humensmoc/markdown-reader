@@ -873,11 +873,14 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         try {
           const content = document.getText();
           const next = updateReadingHighlight(content, message);
-          const edit = new vscode.WorkspaceEdit();
-          edit.replace(document.uri, new vscode.Range(document.positionAt(0), document.positionAt(content.length)), next);
-          if (!await vscode.workspace.applyEdit(edit)) throw new Error("无法更新当前 Markdown。");
-          if (!await document.save()) throw new Error("高亮已写入编辑器，但文件尚未保存到磁盘。");
-          await postToWebview({ type: "readingHighlightSaved" });
+          if (next !== content) {
+            // All fragments share one undo entry. Never submit per-cell edits separately.
+            const edit = new vscode.WorkspaceEdit();
+            edit.replace(document.uri, new vscode.Range(document.positionAt(0), document.positionAt(content.length)), next);
+            if (!await vscode.workspace.applyEdit(edit)) throw new Error("无法更新当前 Markdown。");
+            if (!await document.save()) throw new Error("高亮已写入编辑器，但文件尚未保存到磁盘。");
+          }
+          await postToWebview({ type: "readingHighlightSaved", unchanged: next === content });
         } catch (error) {
           await postToWebview({ type: "readingHighlightError", message: error instanceof Error ? error.message : String(error) });
         }
@@ -1453,6 +1456,9 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       .asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "highlightFormat.js"))
       .with({ query: `v=${cacheKey}` });
     const nonce = cacheKey;
+    const mathUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "readerMath.js")).with({ query: `v=${cacheKey}` });
+    const katexUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "katex", "katex.min.js"));
+    const katexCssUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "katex", "katex.min.css"));
 
     return `<!doctype html>
 <html lang="zh-CN">
@@ -1460,6 +1466,7 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https: data:; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource} data:; script-src 'nonce-${nonce}';">
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="${katexCssUri}" />
   <link rel="stylesheet" href="${cssUri}" />
   <title>Report Markdown Viewer</title>
 </head>
@@ -1567,6 +1574,8 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     </div>
   </div>
   <script nonce="${nonce}" src="${mermaidUri}"></script>
+  <script nonce="${nonce}" src="${katexUri}"></script>
+  <script nonce="${nonce}" src="${mathUri}"></script>
   <script nonce="${nonce}" src="${highlightFormatUri}"></script>
   <script nonce="${nonce}" src="${highlightsUri}"></script>
   <script nonce="${nonce}" src="${jsUri}"></script>

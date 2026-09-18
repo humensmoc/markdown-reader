@@ -1676,7 +1676,7 @@ function applyBlockDragSetting() {
     });
     root
       .querySelectorAll(
-        "pre.md-block, .mermaid-block.md-block, .table-wrap.md-block, blockquote.md-block, .list-line.md-block:not(.source-line), .md-html-block.md-block"
+        "pre.md-block, .mermaid-block.md-block, .reader-math-display.md-block, .table-wrap.md-block, blockquote.md-block, .list-line.md-block:not(.source-line), .md-html-block.md-block"
       )
       .forEach((block) => {
         if (!block.closest(".footnotes")) {
@@ -2747,7 +2747,7 @@ function getAnnotationTextNodes(anchor) {
   const nodes = [];
   const walker = document.createTreeWalker(anchor, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
-      return node.parentElement?.closest(".annotation-marker, .md-drag-handle")
+      return node.parentElement?.closest(".annotation-marker, .md-drag-handle, .reader-math")
         ? NodeFilter.FILTER_REJECT
         : NodeFilter.FILTER_ACCEPT;
     }
@@ -3322,6 +3322,12 @@ function preprocessMarkdownContent(content) {
 
   for (let index = 0; index < rawLines.length; index += 1) {
     const line = rawLines[index];
+    const mathBlock = !inCode && typeof window !== "undefined" && window.ReaderMath?.readBlock(rawLines, index);
+    if (mathBlock) {
+      bodyLines.push(...rawLines.slice(index, mathBlock.endLine + 1));
+      index = mathBlock.endLine;
+      continue;
+    }
     const fence = parseCodeFenceLine(line);
     if (fence) {
       if (!inCode) {
@@ -3533,6 +3539,7 @@ function renderBlockquote(parts, context) {
       if (unordered) {
         const item = document.createElement("p");
         item.className = "list-line unordered-line";
+        tagMdRange(item, part.lineIndex, part.lineIndex);
         const marker = document.createElement("span");
         marker.className = "list-marker";
         marker.textContent = "•";
@@ -3545,6 +3552,7 @@ function renderBlockquote(parts, context) {
       }
 
       const p = document.createElement("p");
+      tagMdRange(p, part.lineIndex, part.lineIndex);
       appendInlineMarkdown(p, part.text, context);
       blockquote.appendChild(p);
     }
@@ -4117,6 +4125,16 @@ function renderMarkdown(content, file) {
       codeLines.push(line);
       continue;
     }
+    const mathBlock = window.ReaderMath?.readBlock(lines, lineIndex);
+    if (mathBlock) {
+      flushParagraph();
+      flushTable();
+      const element = window.ReaderMath.render(mathBlock, true);
+      tagMdBlock(element, lineIndex, mathBlock.endLine, { draggable: true });
+      fragment.appendChild(element);
+      lineIndex = mathBlock.endLine;
+      continue;
+    }
     if (isTableRow(line)) {
       flushParagraph();
       tableRows.push({ cells: parseTableRow(line), lineIndex });
@@ -4665,9 +4683,18 @@ function handleMermaidModalKeydown(event) {
 
 function normalizeMarkdownLines(content) {
   const result = [];
-  for (const rawLine of String(content || "").split(/\r?\n/)) {
+  const sourceLines = String(content || "").split(/\r?\n/);
+  for (let index = 0; index < sourceLines.length; index++) {
+    const rawLine = sourceLines[index];
+    const mathBlock = typeof window !== "undefined" && window.ReaderMath?.readBlock(sourceLines, index);
+    if (mathBlock) {
+      result.push(...sourceLines.slice(index, mathBlock.endLine + 1));
+      index = mathBlock.endLine;
+      continue;
+    }
     const line = rawLine.trim();
-    if (line.startsWith("|") && /\s+\|\s+\|/.test(line)) {
+    const hasMath = typeof window !== "undefined" && window.ReaderMath?.protect(line).items.length;
+    if (!hasMath && line.startsWith("|") && /\s+\|\s+\|/.test(line)) {
       for (const part of line.split(/\s+\|\s+\|/)) {
         const row = part.trim();
         if (!row) continue;
@@ -4731,12 +4758,16 @@ function stripOutlinePrefix(text) {
 }
 
 function parseTableRow(line) {
-  return String(line || "")
+  if (typeof window !== "undefined" && window.ReaderHighlightFormat?.tableCells) {
+    return window.ReaderHighlightFormat.tableCells(String(line || "")).map((cell) => cell.text);
+  }
+  const math = typeof window !== "undefined" && window.ReaderMath?.protect(line);
+  return (math ? math.text : String(line || ""))
     .trim()
     .replace(/^\|/, "")
     .replace(/\|$/, "")
     .split("|")
-    .map((cell) => cell.trim());
+    .map((cell) => math ? window.ReaderMath.restoreText(cell.trim(), math) : cell.trim());
 }
 
 function isTableSeparator(row) {
@@ -4798,17 +4829,29 @@ function appendInlineMarkdown(parent, text, context = {}) {
 }
 
 function renderInlineMarkdown(text, context = {}) {
+  if (!window.ReaderMath) return renderInlineMarkdownContent(text, context);
+  const math = window.ReaderMath.protect(text);
+  return window.ReaderMath.restore(renderInlineMarkdownContent(math.text, context), math);
+}
+
+function renderInlineMarkdownContent(text, context = {}) {
   const fragment = document.createDocumentFragment();
   const value = String(text || "");
   const highlightData = window.ReaderHighlightFormat?.parse(value);
-  const outerHighlight = highlightData?.marks.find((mark) => !highlightData.wrappers.some((wrapper) => !wrapper.highlight && wrapper.start < mark.start && wrapper.end > mark.end));
-  if (outerHighlight) {
-    fragment.appendChild(renderInlineMarkdown(value.slice(0, outerHighlight.start), context));
-    const mark = document.createElement("mark");
-    mark.className = "reading-native-highlight";
-    mark.appendChild(renderInlineMarkdown(value.slice(outerHighlight.inside, outerHighlight.insideEnd), context));
-    fragment.appendChild(mark);
-    fragment.appendChild(renderInlineMarkdown(value.slice(outerHighlight.end), context));
+  const outer = highlightData?.wrappers.find((item) => item.kind &&
+    !highlightData.wrappers.some((wrapper) => wrapper.start < item.start && wrapper.end > item.end));
+  if (outer && (outer.kind !== "link" || isSafeHref(outer.href.trim()))) {
+    fragment.appendChild(renderInlineMarkdown(value.slice(0, outer.start), context));
+    const node = document.createElement(outer.kind === "link" ? "a" : outer.kind);
+    if (outer.kind === "mark") node.className = "reading-native-highlight";
+    if (outer.kind === "link") {
+      node.href = outer.href.trim(); node.title = outer.href.trim();
+      if (outer.href.trim().startsWith("#")) decorateInternalAnchorLink(node);
+    }
+    if (outer.kind === "code") node.textContent = value.slice(outer.inside, outer.insideEnd);
+    else node.appendChild(renderInlineMarkdown(value.slice(outer.inside, outer.insideEnd), context));
+    fragment.appendChild(node);
+    fragment.appendChild(renderInlineMarkdown(value.slice(outer.end), context));
     return fragment;
   }
   let cursor = 0;
@@ -5027,7 +5070,7 @@ function appendInlineFormatting(parent, text) {
 }
 
 function appendTextWithBareUrls(parent, text) {
-  const value = String(text || "");
+  const value = String(text || "").replace(/\\([\\|])/g, "$1");
   const urlPattern = /https?:\/\/[^\s<>"'，。；、（）【】《》]+/g;
   let cursor = 0;
   let match;

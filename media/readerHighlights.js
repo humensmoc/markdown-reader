@@ -6,7 +6,9 @@
   let sourceDocument = "";
   const root = () => document.querySelector("#reportContent .markdown-body .content-root");
   const editing = () => document.body.matches(".editor-mode, .wysiwyg-mode");
-  const excluded = "button, input, textarea, select, script, style, .outline-number, .list-marker, .footnote-ref, .footnotes, .obsidian-properties, .md-drag-handle, [aria-hidden=true]";
+  const unsupported = "pre, .mermaid-block, .reader-math";
+  const excluded = `button, input, textarea, select, script, style, ${unsupported}, .outline-number, .list-marker, .footnote-ref, .footnotes, .obsidian-properties, .md-drag-handle, [aria-hidden=true]`;
+  let saveNotice = "";
 
   // Normalized DOM text with character positions; block boundaries count as whitespace.
   function textIndex() {
@@ -19,13 +21,13 @@
       if (!parent || parent.closest(excluded)) continue;
       const block = parent.closest("p, li, td, th, pre, h1, h2, h3, h4, h5, h6");
       if (previousBlock && block !== previousBlock && chars.at(-1) !== " ") {
-        chars.push(" "); points.push({ node, offset: 0 });
+        chars.push(" "); points.push({ node, offset: 0, block: null });
       }
       previousBlock = block;
       for (let offset = 0; offset < node.length; offset++) {
         const char = /\s/.test(node.data[offset]) ? " " : node.data[offset];
         if (char === " " && chars.at(-1) === " ") continue;
-        chars.push(char); points.push({ node, offset });
+        chars.push(char); points.push({ node, offset, block });
       }
     }
     return { text: chars.join(""), points };
@@ -51,10 +53,39 @@
     });
     while (start >= 0 && start < end && index.text[start] === " ") start++;
     while (end > start && index.text[end - 1] === " ") end--;
-    if (start < 0 || end <= start) { pending = null; return; }
+    const skipped = [...container.querySelectorAll(unsupported)].some((el) => range.intersectsNode(el)) ||
+      [...container.querySelectorAll("code")].some((el) => {
+        if (!range.intersectsNode(el)) return false;
+        const whole = document.createRange(); whole.selectNodeContents(el);
+        return range.compareBoundaryPoints(Range.START_TO_START, whole) > 0 || range.compareBoundaryPoints(Range.END_TO_END, whole) < 0;
+      });
+    if (start < 0 || end <= start) { pending = skipped ? { unsupportedOnly: true } : null; return; }
     const exact = index.text.slice(start, end);
+    const blocks = new Map();
+    index.points.forEach((point, i) => {
+      if (!point.block) return;
+      if (!blocks.has(point.block)) blocks.set(point.block, { first: i, last: i + 1 });
+      else blocks.get(point.block).last = i + 1;
+    });
+    const segments = [];
+    for (const [block, bounds] of blocks) {
+      let lo = Math.max(start, bounds.first), hi = Math.min(end, bounds.last);
+      while (lo < hi && index.text[lo] === " ") lo++;
+      while (hi > lo && index.text[hi - 1] === " ") hi--;
+      if (lo >= hi) continue;
+      const owner = block.closest("[data-md-start][data-md-end]");
+      if (!owner) { pending = null; return; }
+      let blockStart = bounds.first, blockEnd = bounds.last;
+      while (blockStart < blockEnd && index.text[blockStart] === " ") blockStart++;
+      while (blockEnd > blockStart && index.text[blockEnd - 1] === " ") blockEnd--;
+      segments.push({ exact: index.text.slice(lo, hi), prefix: "", suffix: "",
+        blockText: index.text.slice(blockStart, blockEnd), textStart: lo - blockStart, textEnd: hi - blockStart,
+        lineStart: Number(owner.dataset.mdStart), lineEnd: Number(owner.dataset.mdEnd),
+        ...(block.matches("td, th") ? { cellIndex: block.cellIndex } : {}) });
+    }
+    if (!segments.length) { pending = null; return; }
     pending = {
-      id: crypto.randomUUID(), exact,
+      id: crypto.randomUUID(), exact, segments, skipped,
       prefix: index.text.slice(Math.max(0, start - 48), start),
       suffix: index.text.slice(end, end + 48),
       occurrences: occurrences(index.text, exact).length,
@@ -94,7 +125,8 @@
       const element = elements[i];
       if (!element) return;
       marks.push({ id: `native-${item.start}`, exact: element.textContent, prefix: "", suffix: "", occurrences: 1,
-        color: "yellow", comment: item.comment, nativeStart: item.start, element });
+        color: "yellow", comment: item.comment, nativeStart: item.start, element,
+        groupSize: item.footnoteId?.startsWith("mark-group-") ? native.filter((m) => m.footnoteId === item.footnoteId).length : 1 });
     });
     repaint();
   }
@@ -125,7 +157,8 @@
   function save(mark, deleting = false) {
     if (busy) return;
     if (!CSS.highlights || !window.Highlight) { showAnnotationToast("当前编辑器版本不支持划词高亮，请升级 VS Code/Cursor。", true); return; }
-    const { raw, rect, element, ...highlight } = mark;
+    const { raw, rect, element, skipped, groupSize, ...highlight } = mark;
+    saveNotice = skipped ? "；已跳过选区中的公式或代码内容" : "";
     busy = true;
     panel?.querySelectorAll("button, textarea").forEach((el) => el.disabled = true);
     hideAnnotationAction();
@@ -134,10 +167,12 @@
   }
   function quickSave() {
     if (!pending || busy) return;
+    if (pending.unsupportedOnly) { showAnnotationToast("选区是公式或代码块，暂不支持高亮。", true); return; }
     save({ ...pending, color: "yellow" });
   }
   function compose(mark = pending) {
     if (!mark || busy || editing()) return;
+    if (mark.unsupportedOnly) { showAnnotationToast("选区是公式或代码块，暂不支持高亮。", true); return; }
     const draft = { ...mark, color: "yellow" };
     panel?.remove(); hideTooltip(); hideAnnotationAction();
     panel = document.createElement("div");
@@ -150,6 +185,8 @@
       ${mark.raw || Number.isInteger(mark.nativeStart) ? '<button type="button" data-action="delete">删除高亮</button>' : ""}
       <button type="button" data-action="save">保存</button></div>`;
     panel.querySelector("blockquote").textContent = mark.exact;
+    if (mark.groupSize > 1) panel.querySelector(".reading-highlight-format").textContent = `这 ${mark.groupSize} 处高亮共享评论；删除只取消当前片段`;
+    else if (mark.segments?.length > 1) panel.querySelector(".reading-highlight-format").textContent = "选中文字将分段高亮，共享本次评论";
     const textarea = panel.querySelector("textarea"); textarea.value = mark.comment;
     panel.querySelector('[data-action="cancel"]').onclick = close;
     panel.querySelector('[data-action="save"]').onclick = () => save({ ...draft, comment: textarea.value.trim() });
@@ -206,7 +243,7 @@
   });
   window.addEventListener("message", (event) => {
     if (event.data?.type === "readingHighlightSaved") {
-      busy = false; close(); showAnnotationToast("高亮已保存到当前 Markdown");
+      busy = false; close(); showAnnotationToast((event.data.unchanged ? "没有新增高亮" : "高亮已保存到当前 Markdown") + saveNotice); saveNotice = "";
     } else if (event.data?.type === "readingHighlightError") {
       busy = false;
       panel?.querySelectorAll("button, textarea").forEach((el) => el.disabled = false);

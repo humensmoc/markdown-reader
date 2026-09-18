@@ -53,12 +53,46 @@ assert(sharedDeleted.includes("[^shared]: 共用评论"));
 assert.equal(create("重复文字。\n\n不同上下文的重复文字。", { exact: "重复文字", lineStart: 2, lineEnd: 2 }), "重复文字。\n\n不同上下文的==重复文字==。");
 assert.throws(() => create("选择文字。选择文字。"), /唯一定位/);
 assert.throws(() => create("```md\n选择文字\n```"), /定位/);
-assert.throws(() => create("==选择文字=="), /已有高亮/);
-assert.throws(() => create("选择\n文字", { exact: "选择 文字" }), /同一段/);
+assert.equal(create("==选择文字=="), "==选择文字==");
+assert.equal(create("选择\n文字", { exact: "选择 文字" }), "==选择==\n==文字==");
 assert.equal(create("**选择文字**"), "==**选择文字**==");
 assert.equal(create("**前选择文字后**"), "**前==选择文字==后**");
 assert.equal(create("[选择文字](https://example.com)"), "==[选择文字](https://example.com)==");
 assert.equal(create("`选择文字`"), "==`选择文字`==");
+assert.equal(create("普通 | 选择文字", { exact: "普通 | 选择文字" }), "==普通 | 选择文字==");
+assert.equal(create("前**加粗文字**后", { exact: "粗文字后" }), "前**加==粗文字==**==后==");
+assert.equal(create("前[链接文字](https://example.com)后", { exact: "接文字后" }), "前[链==接文字==](https://example.com)==后==");
+assert.equal(create("前==已有==[^old]后", { exact: "前已有后" }), "==前====已有==[^old]==后==");
+assert.equal(create("甲 乙\\|丙", { exact: "甲 乙|丙" }), "==甲 乙\\|丙==");
+for (const eol of ["\n", "\r\n"]) {
+  const table = ["| 类别 | 说明 |", "| --- | --- |", "| 重复 | 重复 |", "| 空洞 | 细节 |"].join(eol);
+  assert.equal(create(table, { exact: "重复 重复 空洞 细节" }),
+    ["| 类别 | 说明 |", "| --- | --- |", "| ==重复== | ==重复== |", "| ==空洞== | ==细节== |"].join(eol));
+  assert.equal(create(table, { segments: [{ exact: "重复", prefix: "", suffix: "", blockText: "重复", textStart: 0, textEnd: 2, lineStart: 2, lineEnd: 2, cellIndex: 1 }] }),
+    table.replace("| 重复 | 重复 |", "| 重复 | ==重复== |"));
+  const paragraphs = ["未选开头选中尾部", "", "> 引用文字", "", "- 列表内容", "  - 嵌套项目", "", "选中开头未选结尾"].join(eol);
+  const changed = create(paragraphs, { exact: "选中尾部 引用文字 列表内容 嵌套项目 选中开头" });
+  assert.equal(changed, ["未选开头==选中尾部==", "", "> ==引用文字==", "", "- ==列表内容==", "  - ==嵌套项目==", "", "==选中开头==未选结尾"].join(eol));
+}
+const groupSource = "第一段\n\n第二段";
+let group = create(groupSource, { exact: "第一段 第二段", comment: "共享评论" });
+assert.equal(format.parse(group).marks.length, 2);
+assert.equal(format.parse(group).definitions.length, 1);
+assert(format.parse(group).marks.every((m) => m.comment === "共享评论"));
+group = edit(group, { comment: "统一更新" });
+assert(format.parse(group).marks.every((m) => m.comment === "统一更新"));
+const groupWithoutComment = edit(group, { comment: "" });
+assert.equal(format.parse(groupWithoutComment).definitions.length, 0);
+assert.equal(format.parse(groupWithoutComment).marks.length, 2);
+group = edit(group, {}, true);
+assert.equal(format.parse(group).marks.length, 1);
+assert.equal(format.parse(group).marks[0].comment, "统一更新");
+group = edit(group, {}, true);
+assert.equal(group.trim(), groupSource);
+const mathAndCode = "前文 $x$ 后文\n\n```js\nconst x = 1;\n```\n\n末尾";
+const skipped = create(mathAndCode, { exact: "前文 后文 末尾" });
+assert.equal(skipped, "==前文== $x$ ==后文==\n\n```js\nconst x = 1;\n```\n\n==末尾==");
+assert.deepEqual(format.tableCells('| 甲\\|乙 | `a|b` | $|x|$ |').map((c) => c.text), ['甲\\|乙', '`a|b`', '$|x|$']);
 assert.equal(format.parse("`==不是高亮==`\n\n\\==也不是==").marks.length, 0);
 const legacyRaw = JSON.stringify({ ...example, comment: "旧评论", color: "pink" });
 const legacy = "选择文字\n\n<!-- mr-highlight " + legacyRaw + " -->\n";
@@ -72,26 +106,32 @@ async function browserTests() {
   const http = require("node:http");
   const source = fs.readFileSync(path.join(root, "src/extension.ts"), "utf8");
   let html = source.slice(source.indexOf("<!doctype html>"), source.indexOf("</html>`") + 7);
-  for (const [name, value] of Object.entries({ nonce: "test", cssUri: "/media/report.css", jsUri: "/media/reportViewer.js", highlightsUri: "/media/readerHighlights.js", highlightFormatUri: "/media/highlightFormat.js", mermaidUri: "/media/mermaid.min.js", wysiwygUri: "/media/wysiwygEditor.js", "webview.cspSource": "'self'" })) html = html.split("${" + name + "}").join(value);
+  for (const [name, value] of Object.entries({ nonce: "test", cssUri: "/media/report.css", jsUri: "/media/reportViewer.js", highlightsUri: "/media/readerHighlights.js", highlightFormatUri: "/media/highlightFormat.js", mermaidUri: "/media/mermaid.min.js", wysiwygUri: "/media/wysiwygEditor.js", mathUri: "/media/readerMath.js", katexUri: "/media/katex/katex.min.js", katexCssUri: "/media/katex/katex.min.css", "webview.cspSource": "'self'" })) html = html.split("${" + name + "}").join(value);
   html = html.replace("</head>", `<style nonce="test">:root { --vscode-editor-background:#fff; --vscode-sideBar-background:#f8f9fb; --vscode-editor-foreground:#252a34; --vscode-descriptionForeground:#667085; --vscode-panel-border:#dde1e8; --vscode-editorWidget-border:#c3cad4; }</style></head>`);
   const server = http.createServer((req, res) => {
     if (req.url === "/") { res.setHeader("Content-Type", "text/html; charset=utf-8"); res.end(html); return; }
-    const relative = req.url.split("?")[0];
-    if (!/^\/media\/[a-zA-Z.]+$/.test(relative)) { res.writeHead(404); res.end(); return; }
-    res.setHeader("Content-Type", relative.endsWith(".css") ? "text/css" : "application/javascript");
-    res.end(fs.readFileSync(path.join(root, relative)));
+    if (req.url === "/favicon.ico") { res.writeHead(204); res.end(); return; }
+    const file = path.resolve(root, "." + new URL(req.url, "http://localhost").pathname);
+    if (!file.startsWith(path.join(root, "media") + path.sep) || !fs.existsSync(file)) { res.writeHead(404); res.end(); return; }
+    const type = { ".js": "application/javascript", ".css": "text/css", ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf" }[path.extname(file)];
+    res.setHeader("Content-Type", type || "application/octet-stream");
+    res.end(fs.readFileSync(file));
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const browser = await chromium.launch({ headless: true });
+  const executablePath = [process.env.HIGHLIGHT_BROWSER, "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", "C:/Program Files/Google/Chrome/Application/chrome.exe"].find((p) => p && fs.existsSync(p));
+  const browser = await chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}) });
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 820 } });
     const errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
+    page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
+    const saveMessages = [];
     let documentText = "# 阅读高亮测试\n\n选择文字可以高亮，也可以添加评论。\n\n第二段有 **加粗文字** 和普通内容。\n\n重复文字在这里。\n\n不同上下文中也有重复文字。\n\n| 项目 | 说明 |\n| --- | --- |\n| 表格 | 跨节点高亮测试 |\n";
     const payload = () => ({ ok: true, title: "test.md", files: [{ name: "test.md", label: "test", content: documentText, headings: extractMarkdownHeadings(documentText, "test") }] });
     async function render() { await page.evaluate((payload) => window.postMessage({ type: "render", payload }, "*"), payload()); }
     await page.exposeFunction("hostMessage", async (message) => {
       if (message.type === "saveReadingHighlight" || message.type === "deleteReadingHighlight") {
+        saveMessages.push(message);
         try {
           documentText = updateReadingHighlight(documentText, message);
           await render();
@@ -226,7 +266,7 @@ async function browserTests() {
     await page.screenshot({ path: path.join(output, "markdown-reader-comment-hover-dark.png") });
     await page.keyboard.press("Escape");
     assert(await popover.isHidden());
-    await ref.focus();
+    await ref.evaluate((el) => { el.blur(); el.focus({ preventScroll: true }); });
     await page.waitForSelector(".footnote-hover-popover:not([hidden])");
     await page.keyboard.press("Escape");
     assert.equal(await ref.getAttribute("aria-describedby"), null);
@@ -245,8 +285,132 @@ async function browserTests() {
     assert(await popover.isHidden());
     await render();
     assert(await popover.isHidden());
+    // Real DOM selections across cells, source lines, paragraphs and inline formats.
+    async function loadBatch(content) {
+      documentText = content;
+      await render();
+      await page.waitForFunction((text) => latestDocumentText === text, content);
+    }
+    async function selectAcross(startText, endText) {
+      await page.evaluate(({ startText, endText }) => {
+        const walker = document.createTreeWalker(document.querySelector(".markdown-body .content-root"), NodeFilter.SHOW_TEXT);
+        let node, start, end;
+        while ((node = walker.nextNode())) {
+          if (node.parentElement.closest(".outline-number,.list-marker,.footnotes,.footnote-ref,.md-drag-handle")) continue;
+          if (!start && node.data.includes(startText)) start = { node, offset: node.data.indexOf(startText) };
+          if (start && node.data.includes(endText)) { end = { node, offset: node.data.indexOf(endText) + endText.length }; break; }
+        }
+        if (!start || !end) throw Error("Missing range endpoints");
+        const range = document.createRange(); range.setStart(start.node, start.offset); range.setEnd(end.node, end.offset);
+        getSelection().removeAllRanges(); getSelection().addRange(range);
+      }, { startText, endText });
+      await page.waitForSelector(".annotation-action:not([hidden])");
+    }
+    async function quickBatch(count) {
+      const before = saveMessages.length;
+      await page.getByRole("button", { name: "高亮选中文字", exact: true }).click();
+      try { await waitCount(count); }
+      catch (error) {
+        console.error(JSON.stringify({ documentText, message: saveMessages.at(-1), toast: await page.locator(".annotation-toast").allTextContents(), marks: await page.locator(".content-root mark").allTextContents() }, null, 2));
+        await page.screenshot({ path: path.join(output, "markdown-reader-batch-failure.png") });
+        throw error;
+      }
+      assert.equal(saveMessages.length, before + 1, "One save message for the whole selection");
+    }
+    await page.setViewportSize({ width: 1280, height: 820 });
+    const tableSource = "# 表格批量高亮\n\n| 类别 | 中文解释 |\n| --- | --- |\n| 重复 | 重复 |\n| 空洞 | 具体细节 |\n";
+    await loadBatch(tableSource);
+    await page.locator("tbody tr").first().locator("td").nth(1).evaluate((cell) => {
+      const range = document.createRange(); range.selectNodeContents(cell);
+      getSelection().removeAllRanges(); getSelection().addRange(range);
+    });
+    await page.waitForSelector(".annotation-action:not([hidden])");
+    await quickBatch(1);
+    assert(documentText.includes("| 重复 | ==重复== |"), "Repeated cells retain exact cell identity");
+    await selectAcross("重复", "具体细节");
+    await quickBatch(4);
+    assert(documentText.includes("| ==重复== | ==重复== |\n| ==空洞== | ==具体细节== |"));
+    assert.equal(await page.locator("tbody td").count(), 4);
+    assert.equal(await page.locator("thead mark").count(), 0);
+    assert.equal(await page.locator("tbody td mark").count(), 4);
+    await page.screenshot({ path: path.join(output, "markdown-reader-batch-table.png") });
+    await page.reload(); await render(); await waitCount(4);
+    await loadBatch("# 表格转义与代码\n\n| 内容 | 说明 |\n| --- | --- |\n| 甲\\|乙 | `a|b` |\n");
+    assert.equal(await page.locator("tbody td").count(), 2);
+    assert.equal(await page.locator("tbody td").first().textContent(), "甲|乙");
+    await selectAcross("甲|乙", "a|b");
+    await quickBatch(2);
+    assert(documentText.includes("| ==甲\\|乙== | ==`a|b`== |"));
+    const mixedSource = "# 多段高亮\n\n未选开头选中尾部\n源码第二行\n\n> 引用内容\n>\n> 引用内容\n\n- 列表内容\n  - 嵌套项目\n\n选中开头未选结尾\n";
+    await loadBatch(mixedSource);
+    await selectAcross("选中尾部", "选中开头");
+    await quickBatch(7);
+    assert(documentText.includes("未选开头==选中尾部==\n==源码第二行=="));
+    assert(documentText.includes("> ==引用内容==\n>\n> ==引用内容=="));
+    assert(documentText.includes("- ==列表内容==\n  - ==嵌套项目=="));
+    assert(documentText.includes("==选中开头==未选结尾"));
+    await page.screenshot({ path: path.join(output, "markdown-reader-batch-paragraphs.png") });
+    await loadBatch("# 格式边界\n\n前**加粗文字**接[链接文字](https://example.com)后\n");
+    await selectAcross("粗文字", "链接");
+    await quickBatch(3);
+    assert(documentText.includes("前**加==粗文字==**==接==[==链接==文字](https://example.com)后"));
+    assert.equal(await page.locator(".content-root a[href='https://example.com']").count(), 1);
+    await loadBatch("# 格式内共享评论\n\n前**加粗文字**接[链接文字](https://example.com/path_(test))后\n");
+    await selectAcross("粗文字", "链接");
+    await page.locator(".annotation-action").getByRole("button", { name: "评论", exact: true }).click();
+    await page.locator("#readingHighlightComment").fill("跨格式评论");
+    await page.getByRole("button", { name: "保存", exact: true }).click();
+    await waitCount(3);
+    assert.equal(await page.locator(".content-root strong").count(), 1);
+    assert.equal(await page.locator(".content-root a[href='https://example.com/path_(test)']").count(), 1);
+    assert.equal(await page.locator(".content-root p .footnote-ref").count(), 3);
+    assert(format.parse(documentText).marks.every((m) => m.comment === "跨格式评论"));
+    const inlineSerialized = await page.evaluate(() => serializeDocumentMarkdown());
+    assert(format.parse(inlineSerialized).marks.every((m) => m.comment === "跨格式评论"));
+    await page.reload(); await render(); await waitCount(3);
+    await loadBatch("# 跳过公式与代码\n\n前文 $x$ 后文\n\n```js\nconst x = 1;\n```\n\n末尾\n");
+    await selectAcross("前文", "末尾");
+    await quickBatch(3);
+    assert(documentText.includes("==前文== $x$ ==后文=="));
+    assert(documentText.includes("```js\nconst x = 1;\n```"));
+    assert.equal(await page.locator(".reader-math mark, pre mark").count(), 0);
+    assert(await page.getByText("高亮已保存到当前 Markdown；已跳过选区中的公式或代码内容", { exact: true }).isVisible());
+    await loadBatch("# 共享评论\n\n第一段\n\n第二段\n");
+    await selectAcross("第一段", "第二段");
+    await page.locator(".annotation-action").getByRole("button", { name: "评论", exact: true }).click();
+    await page.locator("#readingHighlightComment").fill("同一次选择");
+    await page.getByRole("button", { name: "保存", exact: true }).click();
+    await waitCount(2);
+    assert.equal(format.parse(documentText).definitions.length, 1);
+    const serializedGroup = await page.evaluate(() => serializeDocumentMarkdown());
+    assert.equal(format.parse(serializedGroup).marks.length, 2);
+    assert(format.parse(serializedGroup).marks.every((m) => m.comment === "同一次选择"));
+    await page.reload(); await render(); await waitCount(2);
+    await clickHighlight(1);
+    assert((await page.locator(".reading-highlight-format").textContent()).includes("2 处高亮共享评论"));
+    await page.locator("#readingHighlightComment").fill("整组更新");
+    await page.getByRole("button", { name: "保存", exact: true }).click();
+    await waitCount(2);
+    assert(format.parse(documentText).marks.every((m) => m.comment === "整组更新"));
+    await clickHighlight();
+    await page.getByRole("button", { name: "删除高亮", exact: true }).click();
+    await waitCount(1);
+    assert.equal(format.parse(documentText).marks[0].comment, "整组更新");
+    await page.setViewportSize({ width: 390, height: 700 });
+    await clickHighlight();
+    assert(await page.locator(".reading-highlight-panel").evaluate((el) => { const r = el.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; }));
+    await page.screenshot({ path: path.join(output, "markdown-reader-batch-comment-mobile.png") });
+    await page.getByRole("button", { name: "取消", exact: true }).click();
+    const wrapped = "这是一段因窗口宽度而自动折行的长文本。".repeat(12);
+    await loadBatch("# 自动折行\n\n" + wrapped + "\n");
+    await select(wrapped);
+    await quickBatch(1);
+    assert(documentText.includes("==" + wrapped + "=="), "Visual wrapping does not split a source line");
+    assert(await page.locator(".content-root p mark").evaluate((el) => {
+      const range = document.createRange(); range.selectNodeContents(el); return range.getClientRects().length > 1;
+    }));
     assert.deepEqual(errors, []);
-    console.log("Browser checks passed: native highlight/footnote save, manual format, reload, duplicate selection, formatting, serialization, WYSIWYG, legacy conversion, comment hover/focus/dismissal, long-comment scrolling, cite coexistence, dark/light themes, narrow layout and AI coexistence.");
+    console.log("Browser checks passed: batch tables, repeated cells, escaped pipes, source/visual wrapping, paragraphs, lists, quotes, partial formatting, existing marks, skipped math/code, shared comments, reload/serialization, narrow layout, original CRUD, legacy conversion and AI coexistence. No page/console errors.");
     console.log("Screenshots: " + output);
   } finally { await browser.close(); await new Promise((resolve) => server.close(resolve)); }
 }
