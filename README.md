@@ -14,7 +14,7 @@
 - 标题自动编号，以及可持久化的字体、行宽、主题等阅读样式
 - 表格、代码块、Mermaid、粗体、斜体、行内代码与 Obsidian 笔记属性渲染
 - `[cite: n]` 引用跳转与返回原文（正文只显示蓝色数字；来源行以 `[cite source]` 标记，见 [格式规范](docs/markdown_format_spec.md)）
-- 所见即所得编辑、Markdown 块拖拽，以及保存回原文件
+- CodeMirror 6 实时预览编辑、源码范围块拖拽，沿用 VS Code 保存与撤销
 - 划词高亮：正文 `==高亮==`、可选脚注评论、悬停预览与点击编辑，可在 Obsidian 阅读
 - 内嵌批注：正文定位、上下条导航、AI 回复高亮、解决归档，数据保存在当前 Markdown 中
 
@@ -46,9 +46,25 @@
 - **批注**：选中正文后添加批注；AI 修改正文后，与批注相关的所有改动都会直接在正文中高亮，批注卡片会区分用户问题和 AI 回复；解决后的批注继续留在 Markdown 文末，并可从右下角“已解决批注”按钮查看
 - **链接**：`http` / `https` / `mailto` 走系统浏览器；相对 `.md` 在编辑器内打开；`#anchor` 在 webview 内跳转；危险协议（如 `javascript:`）会被拦截
 
+#### 实时预览编辑（0.0.11）
+
+正文默认可以编辑，无需切换编辑模式。标题、粗体、斜体、删除线、行内代码和链接在光标离开后隐藏 Markdown 标记；光标或选区进入时显示标记，并保留对应样式。未闭合的语法保留原文。
+
+- 输入立即同步 VS Code 文档；**Ctrl+S** 或已有自动保存设置负责落盘。正文和表格输入不主动保存。批注、高亮仍在显式保存时写入磁盘。
+- **Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y** 使用 VS Code 文档撤销历史；**Ctrl+B / Ctrl+I** 为选文切换粗体和斜体。
+- 表格保持网格显示，点击单元格即可输入。**Tab / Shift+Tab** 切换单元格，**Enter** 到下一行同列，最后一行退出；**Esc** 返回正文。支持跨格选字和批量高亮。
+- 普通链接单击编辑，**Ctrl/Cmd+单击**打开；引用数字单击跳转，并提供“返回原文”。公式、图片、Mermaid 点击展开源码，Mermaid 保留放大按钮。
+- 设置中的 **显示全部 Markdown 标记**，或同名命令面板命令，仅切换显示方式，不产生另一份文档。
+- 遇到重叠的外部修改时，编辑器暂停写入并保留本地输入。先使用 **查看差异** 复制/保存需要的内容，再选择重新加载。非重叠修改自动映射。
+- 打开、移动光标、折叠、切换主题不会格式化文件，不更改用户的默认打开方式与自动保存设置。
+- 彩虹标题在显示编号时只给编号着色；块拖动手柄位于正文左侧，引用跳转显示来源高亮框。0.0.10 修复了预览块间距、退出表格单元格时引起的鼠标定位偏移。
+- 标题编号与标题文字字号一致；正文与目录使用相同的折叠箭头，引用块沿用白色竖线和正文颜色。
+
+实现与验收记录见 [实时预览开发说明](docs/live-preview.md)。
+
 #### 划词高亮与阅读评论
 
-在阅读模式选中文字，快速点击笔形按钮即可高亮；悬停约 350ms，或点击“评论”，可填写可选评论。Enter 保存、Shift+Enter 换行、Esc 取消，输入法选字不会触发保存。点击已有高亮可修改评论或删除。
+直接在正文或表格中选中文字，快速点击笔形按钮即可高亮；悬停约 350ms，或点击“评论”，可填写可选评论。Enter 保存、Shift+Enter 换行、Esc 取消，输入法选字不会触发保存。点击已有高亮可修改评论或删除。
 
 从 0.0.6 起，新高亮直接保存为正文 `==文字==`，评论保存为对应脚注。没有评论时不生成脚注；Obsidian 可使用其原生高亮与脚注语法显示。新标记统一使用黄色，不再记录自定义颜色。例如：
 
@@ -66,7 +82,7 @@
 
 批量高亮添加评论时，各片段共用一条脚注；重新打开文档后，点击任一片段修改评论会同步整组，删除高亮只取消当前片段。清空共享评论会取消整组评论，保留各片段高亮。公式和代码块暂不参与高亮，跨过这些内容选择时会提示已跳过；行内代码需完整选中。表格拖选按实际文字选区处理，不会自动扩大为整列。
 
-拖拽排序和所见即所得编辑会保留新格式。阅读评论不进入 AI 待处理队列，需要 AI 修改正文时使用“AI 批注”。
+拖拽排序和实时预览编辑会保留新格式。阅读评论不进入 AI 待处理队列，需要 AI 修改正文时使用“AI 批注”。
 
 #### AI 批注回写格式
 
@@ -104,7 +120,7 @@ change_quotes: ["第一处相关改动正文", "第二处相关改动正文"]
 
 公式也可放在列表、引用和表格单元格中。代码块与行内代码不渲染公式；转义美元 `\$` 保持原样。错误或不支持的公式保留源码，悬停可查看原因。长公式在自身区域横向滚动。
 
-所见即所得模式中公式作为不可拆分的只读内容，编辑周围文字后保存仍保留原始 LaTeX。修改公式本身请使用右下角“编辑”打开源码编辑器。示例见 [公式示例](docs/fixtures/math-demo.md)。
+公式默认显示排版结果，点击后就地展开 LaTeX 源码；光标离开后恢复预览。编辑周围文字保留原始 LaTeX。示例见 [公式示例](docs/fixtures/math-demo.md)。
 
 ### 常见问题
 
@@ -162,7 +178,7 @@ cursor --install-extension ./markdown-reader-<version>.vsix --force
 code --install-extension ./markdown-reader-<version>.vsix --force
 ```
 
-`<version>` 见 `package.json`（当前生成 `markdown-reader-0.0.8.vsix`）。若 CLI 不在 PATH，请换成本机 CLI 路径，或用 **Extensions: Install from VSIX...** 图形安装。
+`<version>` 见 `package.json`（当前生成 `markdown-reader-0.0.11.vsix`）。若 CLI 不在 PATH，请换成本机 CLI 路径，或用 **Extensions: Install from VSIX...** 图形安装。
 
 #### 对外发版（摘要）
 
@@ -196,7 +212,7 @@ A single-file Markdown reader, editor, and annotation extension for VS Code / Cu
 - Automatic heading numbering and persistent typography, width, and theme settings
 - Tables, code blocks, Mermaid, inline formatting, and read-only Obsidian properties
 - `[cite: n]` citation navigation with jump-back (body shows blue numbers only; source lines use `[cite source]` — see [format spec](docs/markdown_format_spec.md))
-- WYSIWYG editing, draggable Markdown blocks, and save-back to the original file
+- CodeMirror 6 live preview editing, draggable Markdown blocks, and save-back to the original file
 - Embedded annotations with source navigation, AI-response highlighting, and resolved-history storage in the Markdown file
 
 ### Installation
@@ -225,7 +241,7 @@ To auto-switch every `.md` file to the reader on left-click:
 - **Single-file rendering**: Only the opened `.md` is rendered; sibling Markdown files in the same folder are not scanned or merged
 - **TOC**: Collapsible sub-headings; scroll-sync highlight; resize, collapse, or switch sides with the layout persisted locally
 - **Annotations**: Select body text to add one; navigate unresolved items, highlight the AI-updated passage, and keep resolved history inside the current Markdown
-- **Editing**: Switch to WYSIWYG mode, drag Markdown blocks, and save changes back to the source file
+- **Editing**: Type directly in the CodeMirror live preview. Tables stay editable grids. Ctrl+S and existing auto-save settings write to disk; undo/redo uses VS Code history. Ctrl/Cmd+click opens ordinary links.
 - **Links**: `http` / `https` / `mailto` open in the system browser; relative `.md` opens in the editor; `#anchor` jumps inside the webview; dangerous schemes (e.g. `javascript:`) are blocked
 
 ### FAQ
@@ -285,7 +301,7 @@ cursor --install-extension ./markdown-reader-<version>.vsix --force
 code --install-extension ./markdown-reader-<version>.vsix --force
 ```
 
-See `version` in `package.json` (currently produces `markdown-reader-0.0.8.vsix`). If a CLI is not in PATH, use its full local path or install through **Extensions: Install from VSIX...**.
+See `version` in `package.json` (currently produces `markdown-reader-0.0.11.vsix`). If a CLI is not in PATH, use its full local path or install through **Extensions: Install from VSIX...**.
 
 #### Public release (summary)
 

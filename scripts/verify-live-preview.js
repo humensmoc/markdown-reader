@@ -1,0 +1,53 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+const { start } = require('./live-test-harness');
+async function main() {
+  const h = await start(), { page } = h;
+  try {
+    const text = '# 标题\n\n正文 **粗体**、*斜体*、~~删除~~ 和 `代码`。[网站](https://example.com)\n\n| A | B |\n| :--- | ---: |\n| 内容 | $P(A|B)$ |\n| a\\|b | `x|y` |\n\n公式 $x_i^2$ 与引用 [cite:1]。\n\n$$\nx+y\n$$\n\n```mermaid\ngraph LR\n A-->B\n```\n\n[cite source] 1. [来源](https://example.com)\n';
+    await h.load(text);
+    await page.waitForTimeout(300);
+    assert.equal(await page.locator('.lp-strong').innerText(), '粗体');
+    assert.equal(await page.locator('.lp-table td').count(), 6);
+    await page.waitForSelector('.mermaid-rendered svg');
+    assert.equal(await page.locator('.katex').count(), 3);
+    assert.equal(h.text(), text);
+    await page.evaluate(() => { const e = window.LivePreview; e.goto(e.bridge.text.indexOf('粗体') + 1); });
+    assert.equal(await page.locator('.lp-strong').innerText(), '**粗体**');
+    await page.keyboard.type('X'); await h.idle();
+    assert(h.text().includes('**粗X体**'));
+    await page.keyboard.press('Control+z'); await h.idle();
+    await page.waitForFunction(() => window.LivePreview.bridge.text.includes('**粗体**'));
+    await page.locator('.lp-table td').nth(2).click();
+    await page.keyboard.press('End'); await page.keyboard.type('追加'); await h.idle();
+    assert(h.text().includes('| 内容追加 | $P(A|B)$ |'), h.text());
+    await page.keyboard.press('Tab');
+    assert.equal(await page.locator('.lp-cell-active').getAttribute('data-col'), '1');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.locator('.lp-cell-active').getAttribute('data-row'), '2');
+    await page.keyboard.press('Escape');
+    await page.locator('.lp-cite button').click();
+    assert(await page.locator('#lpReturn').isVisible());
+    await page.locator('#lpReturn').click();
+    await page.evaluate(() => window.LivePreview.goto(0));
+    await page.locator('.mermaid-expand-btn').click();
+    assert(await page.locator('#mermaidModal').isVisible());
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => window.LivePreview.goto(window.LivePreview.bridge.text.indexOf('正文')));
+    const beforeSource = h.text();
+    await page.evaluate(() => window.LivePreview.toggleSource());
+    assert.equal(await page.locator('.lp-table').count(), 0);
+    await page.evaluate(() => window.LivePreview.toggleSource());
+    assert.equal(h.text(), beforeSource);
+    const dir = path.join(os.tmpdir(), 'markdown-reader-live-qa'); fs.mkdirSync(dir, { recursive: true });
+    await page.screenshot({ path: path.join(dir, 'desktop.png'), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'narrow page overflow');
+    await page.screenshot({ path: path.join(dir, 'narrow.png'), fullPage: true });
+    assert.deepEqual(h.errors, []);
+    console.log('Live preview keyboard, table, citation, math, Mermaid and layout passed. Screenshots: ' + dir);
+  } finally { await h.close(); }
+}
+main().catch(e => { console.error(e); process.exitCode = 1; });

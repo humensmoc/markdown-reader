@@ -1,4 +1,9 @@
-const vscode = typeof acquireVsCodeApi === "function" ? acquireVsCodeApi() : null;
+const hostVscode = typeof acquireVsCodeApi === "function" ? acquireVsCodeApi() : null;
+const liveBusiness = new Set(["addAnnotation", "updateAnnotation", "resolveAnnotation", "deleteAnnotation", "normalizeAnnotations", "saveReadingHighlight", "deleteReadingHighlight"]);
+const vscode = { postMessage(message) {
+  if (window.LivePreview && liveBusiness.has(message.type)) window.LivePreview.send(message);
+  else hostVscode?.postMessage(message);
+} };
 
 const reportLayout = document.getElementById("reportLayout");
 const tocDock = document.getElementById("tocDock");
@@ -62,7 +67,8 @@ let readerStyleDialog = null;
 let readerStyleDialogOriginal = null;
 let readerStyleFilePath = "";
 let tocPositionDialog = null;
-let tocPosition = { x: -28, y: 0 };
+const TOC_POSITION_DEFAULTS = Object.freeze({ x: -28, y: 0, marginTop: 32, marginBottom: 32 });
+let tocPosition = { ...TOC_POSITION_DEFAULTS };
 
 const READER_STYLE_DEFAULTS = Object.freeze({
   bodyFontSize: 16,
@@ -137,7 +143,9 @@ const SETTINGS_KEYS = {
   rainbowHeadingColors: "meowReportMarkdown.rainbowHeadingColors",
   enableBlockDrag: "meowReportMarkdown.enableBlockDrag",
   tocOffsetX: "meowReportMarkdown.tocOffsetX",
-  tocOffsetY: "meowReportMarkdown.tocOffsetY"
+  tocOffsetY: "meowReportMarkdown.tocOffsetY",
+  tocMarginTop: "meowReportMarkdown.tocMarginTop",
+  tocMarginBottom: "meowReportMarkdown.tocMarginBottom"
 };
 const LEGACY_SETTINGS_KEYS = {
   contentFontScale: "meowReportMarkdown.contentFontScale",
@@ -164,8 +172,6 @@ initTocResize();
 initTocScrollSpy();
 initTocWheelIsolation();
 initReaderSettings();
-initEditorMode();
-initBlockDrag();
 initCiteHover();
 initAnnotations();
 initAnnotationNavigation();
@@ -176,37 +182,6 @@ window.addEventListener("message", (event) => {
   if (message?.type === "settings") {
     applyExtensionSettings(message);
     return;
-  }
-  if (message?.type === "render") {
-    const nextText = message?.payload?.files?.[0]?.content || "";
-    if (
-      hasRenderedDocument &&
-      document.body.classList.contains("wysiwyg-mode") &&
-      nextText === latestDocumentText
-    ) {
-      return;
-    }
-    latestDocumentText = nextText;
-    hasRenderedDocument = true;
-    if (document.body.classList.contains("editor-mode") && reportEditor && !editorDirty) {
-      reportEditor.value = latestDocumentText;
-    }
-    hideExternalChangeBanner(false);
-    renderReport(message.payload);
-  }
-  if (message?.type === "documentChanged") {
-    handleExternalDocumentChanged(message);
-  }
-  if (message?.type === "reloadDocument") {
-    latestDocumentText = message?.content || latestDocumentText;
-    editorDirty = false;
-    hideExternalChangeBanner(false);
-    if (reportEditor) {
-      reportEditor.value = latestDocumentText;
-    }
-    if (message?.payload) {
-      renderReport(message.payload);
-    }
   }
   if (message?.type === "annotationSaved") {
     closeAnnotationDialog();
@@ -268,7 +243,6 @@ window.addEventListener("resize", fitMermaidModalContent);
 
 if (vscode) {
   requestReaderSettings();
-  postReadySignal();
 }
 
 function requestReaderSettings() {
@@ -327,7 +301,7 @@ function setTocSide(side, { persist = true } = {}) {
   scheduleAnnotationPositions();
 }
 
-function setTocCollapsed(collapsed) {
+function setTocCollapsed(collapsed, { persist = true } = {}) {
   if (!tocDock || !tocToggle) {
     return;
   }
@@ -338,7 +312,7 @@ function setTocCollapsed(collapsed) {
   tocToggle.setAttribute("aria-expanded", String(!collapsed));
   tocToggle.textContent = collapsed ? "目录" : "收起目录";
   tocToggle.title = collapsed ? "展开目录" : "收起目录";
-  localStorage.setItem("meowReportMarkdown.tocCollapsed", collapsed ? "1" : "0");
+  if (persist) localStorage.setItem("meowReportMarkdown.tocCollapsed", collapsed ? "1" : "0");
 
   if (collapsed) {
     if (activeTocLink) {
@@ -595,23 +569,29 @@ function closeReaderStyleDialog({ restore = false } = {}) {
   readerStyleDialogOriginal = null;
 }
 
-function clampTocOffset(value, min, max) {
+function clampTocOffset(value, min, max, fallback = 0) {
   const number = Number(value);
-  return Number.isFinite(number) ? Math.min(max, Math.max(min, Math.round(number))) : 0;
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, Math.round(number))) : fallback;
 }
 
 function loadTocPosition() {
   const savedX = localStorage.getItem(SETTINGS_KEYS.tocOffsetX);
   const savedY = localStorage.getItem(SETTINGS_KEYS.tocOffsetY);
+  const savedTop = localStorage.getItem(SETTINGS_KEYS.tocMarginTop);
+  const savedBottom = localStorage.getItem(SETTINGS_KEYS.tocMarginBottom);
   tocPosition = {
-    x: savedX === null ? -28 : clampTocOffset(savedX, -180, 180),
-    y: savedY === null ? 0 : clampTocOffset(savedY, -260, 260)
+    x: clampTocOffset(savedX ?? TOC_POSITION_DEFAULTS.x, -180, 180, TOC_POSITION_DEFAULTS.x),
+    y: clampTocOffset(savedY ?? TOC_POSITION_DEFAULTS.y, -260, 260, TOC_POSITION_DEFAULTS.y),
+    marginTop: clampTocOffset(savedTop ?? TOC_POSITION_DEFAULTS.marginTop, 0, 200, TOC_POSITION_DEFAULTS.marginTop),
+    marginBottom: clampTocOffset(savedBottom ?? TOC_POSITION_DEFAULTS.marginBottom, 0, 200, TOC_POSITION_DEFAULTS.marginBottom)
   };
 }
 
 function applyTocPosition() {
   document.documentElement.style.setProperty("--toc-offset-x", `${tocPosition.x}px`);
   document.documentElement.style.setProperty("--toc-offset-y", `${tocPosition.y}px`);
+  document.documentElement.style.setProperty("--toc-margin-top", `${tocPosition.marginTop}px`);
+  document.documentElement.style.setProperty("--toc-margin-bottom", `${tocPosition.marginBottom}px`);
 }
 
 function openTocPositionDialog() {
@@ -630,7 +610,15 @@ function openTocPositionDialog() {
         <span>垂直偏移 <output data-output="y"></output></span>
         <input type="range" min="-260" max="260" step="1" data-axis="y" />
       </label>
-      <p class="toc-position-hint">以空白区域中心为基准，拖动时实时预览。</p>
+      <label class="toc-position-field">
+        <span>上边距 <output data-output="marginTop"></output></span>
+        <input type="range" min="0" max="200" step="1" data-axis="marginTop" />
+      </label>
+      <label class="toc-position-field">
+        <span>下边距 <output data-output="marginBottom"></output></span>
+        <input type="range" min="0" max="200" step="1" data-axis="marginBottom" />
+      </label>
+      <p class="toc-position-hint">上下边距默认各 32 px，拖动时实时预览。垂直偏移以剩余区域中心为基准，始终保留边距；窗口过矮时边距会自动缩小。</p>
       <div class="toc-position-actions">
         <button type="button" data-action="reset">恢复默认</button>
         <span></span>
@@ -639,7 +627,7 @@ function openTocPositionDialog() {
       </div>
     </div>`;
   const sync = () => {
-    for (const axis of ["x", "y"]) {
+    for (const axis of Object.keys(TOC_POSITION_DEFAULTS)) {
       overlay.querySelector(`[data-axis="${axis}"]`).value = String(tocPosition[axis]);
       overlay.querySelector(`[data-output="${axis}"]`).textContent = `${tocPosition[axis]} px`;
     }
@@ -647,8 +635,8 @@ function openTocPositionDialog() {
   };
   overlay.addEventListener("input", (event) => {
     const axis = event.target.dataset.axis;
-    if (!axis) return;
-    tocPosition[axis] = clampTocOffset(event.target.value, axis === "x" ? -180 : -260, axis === "x" ? 180 : 260);
+    if (!Object.hasOwn(TOC_POSITION_DEFAULTS, axis)) return;
+    tocPosition[axis] = clampTocOffset(event.target.value, Number(event.target.min), Number(event.target.max), TOC_POSITION_DEFAULTS[axis]);
     sync();
   });
   overlay.addEventListener("click", (event) => {
@@ -660,11 +648,13 @@ function openTocPositionDialog() {
     }
     const action = event.target.closest("button")?.dataset.action;
     if (action === "reset") {
-      tocPosition = { x: -28, y: 0 };
+      tocPosition = { ...TOC_POSITION_DEFAULTS };
       sync();
     } else if (action === "save") {
       localStorage.setItem(SETTINGS_KEYS.tocOffsetX, String(tocPosition.x));
       localStorage.setItem(SETTINGS_KEYS.tocOffsetY, String(tocPosition.y));
+      localStorage.setItem(SETTINGS_KEYS.tocMarginTop, String(tocPosition.marginTop));
+      localStorage.setItem(SETTINGS_KEYS.tocMarginBottom, String(tocPosition.marginBottom));
       closeTocPositionDialog();
     }
   });
@@ -719,52 +709,6 @@ function handleReaderSettingsOutsideClick(event) {
     return;
   }
   setReaderSettingsOpen(false);
-}
-
-function initEditorMode() {
-  if (!reportEditor || !editorModeToggle || !editorSaveBtn || !editorCancelBtn) {
-    return;
-  }
-
-  editorModeToggle.addEventListener("click", () => {
-    if (document.body.classList.contains("editor-mode")) {
-      exitEditorMode({ discardChanges: false });
-      return;
-    }
-    enterEditorMode();
-  });
-
-  editorSaveBtn.addEventListener("click", () => {
-    if (!reportEditor || !vscode) {
-      return;
-    }
-    const nextText = reportEditor.value;
-    latestDocumentText = nextText;
-    editorDirty = false;
-    vscode.postMessage({ type: "saveContent", content: nextText, persist: true });
-    exitEditorMode({ discardChanges: false, skipConfirm: true });
-  });
-
-  editorCancelBtn.addEventListener("click", () => {
-    exitEditorMode({ discardChanges: true });
-  });
-
-  reportEditor.addEventListener("input", () => {
-    editorDirty = reportEditor.value !== latestDocumentText;
-    postEditorState();
-  });
-}
-
-function postEditorState() {
-  if (!vscode) {
-    return;
-  }
-  vscode.postMessage({
-    type: "editorState",
-    dirty: editorDirty,
-    inEditorMode: document.body.classList.contains("editor-mode"),
-    inWysiwygMode: document.body.classList.contains("wysiwyg-mode")
-  });
 }
 
 function parseSourcePreview(body) {
@@ -882,7 +826,10 @@ function showCiteHoverPopover(citeRef) {
   const isFootnote = Boolean(citeRef?.closest(".footnote-ref"));
   const sourceId = citeRef?.dataset?.sourceTarget;
   let preview = sourceId ? citeSourcePreviewIndex.get(sourceId) : null;
-  if (isFootnote) {
+  if (window.LivePreview && citeRef.dataset.citeNumber) preview = parseSourcePreview(window.LivePreview.sources.get(citeRef.dataset.citeNumber)?.text || "");
+  if (isFootnote && window.LivePreview) {
+    preview = { title: "评论", summary: citeRef.title, links: [] };
+  } else if (isFootnote) {
     const item = document.getElementById(citeRef.dataset.anchor);
     if (!item) return;
     const content = item.cloneNode(true);
@@ -961,7 +908,7 @@ function initCiteHover() {
     return;
   }
 
-  const selector = "button.cite-ref, .footnote-ref a";
+  const selector = "button.cite-ref, .footnote-ref a, button.footnote-ref";
   const show = (event) => {
     const citeRef = event.target.closest(selector);
     if (!citeRef || citeRef.closest(".source-line") || document.body.matches(".editor-mode, .wysiwyg-mode")) {
@@ -1008,57 +955,6 @@ function initCiteHover() {
 let externalChangeBanner = null;
 let pendingExternalPayload = null;
 
-function ensureExternalChangeBanner() {
-  if (externalChangeBanner) {
-    return externalChangeBanner;
-  }
-  const banner = document.createElement("div");
-  banner.id = "externalChangeBanner";
-  banner.className = "external-change-banner";
-  banner.hidden = true;
-  banner.innerHTML =
-    '<span class="external-change-text">文件已在外部修改</span>' +
-    '<div class="external-change-actions">' +
-    '<button type="button" data-action="reload">重新加载</button>' +
-    '<button type="button" data-action="keep">保留我的编辑</button>' +
-    "</div>";
-  banner.addEventListener("click", (event) => {
-    const action = event.target.closest("button")?.dataset?.action;
-    if (action === "reload") {
-      acceptExternalDocumentReload();
-    } else if (action === "keep") {
-      hideExternalChangeBanner(true);
-    }
-  });
-  document.body.appendChild(banner);
-  externalChangeBanner = banner;
-  return banner;
-}
-
-function handleExternalDocumentChanged(message) {
-  pendingExternalPayload = message?.payload || null;
-  latestDocumentText = message?.content || latestDocumentText;
-  if (document.body.classList.contains("editor-mode") && editorDirty) {
-    ensureExternalChangeBanner().hidden = false;
-    return;
-  }
-  if (message?.payload) {
-    renderReport(message.payload);
-  }
-}
-
-function acceptExternalDocumentReload() {
-  editorDirty = false;
-  hideExternalChangeBanner(false);
-  postEditorState();
-  if (pendingExternalPayload) {
-    renderReport(pendingExternalPayload);
-    pendingExternalPayload = null;
-    return;
-  }
-  vscode?.postMessage({ type: "requestReload" });
-}
-
 function hideExternalChangeBanner(keepPending) {
   if (externalChangeBanner) {
     externalChangeBanner.hidden = true;
@@ -1070,53 +966,6 @@ function hideExternalChangeBanner(keepPending) {
 
 function requestDocumentReload() {
   vscode?.postMessage({ type: "requestReload" });
-}
-
-function enterEditorMode() {
-  if (!reportEditor || !editorModeToggle || !editorSaveBtn || !editorCancelBtn) {
-    return;
-  }
-  if (isReaderSettingsOpen()) {
-    setReaderSettingsOpen(false);
-  }
-  reportEditor.hidden = false;
-  reportEditor.value = latestDocumentText;
-  editorDirty = false;
-  document.body.classList.add("editor-mode");
-  document.body.classList.remove("wysiwyg-mode");
-  const wysiwygInput = document.getElementById("enableWysiwygMode");
-  if (wysiwygInput) {
-    wysiwygInput.checked = false;
-  }
-  editorModeToggle.hidden = true;
-  editorSaveBtn.hidden = false;
-  editorCancelBtn.hidden = false;
-  applyBlockDragSetting();
-  window.requestAnimationFrame(() => reportEditor.focus());
-  postEditorState();
-}
-
-function exitEditorMode({ discardChanges = false, skipConfirm = false } = {}) {
-  if (!reportEditor || !editorModeToggle || !editorSaveBtn || !editorCancelBtn) {
-    return;
-  }
-  if (document.body.classList.contains("editor-mode") && editorDirty && !discardChanges && !skipConfirm) {
-    const confirmed = window.confirm("当前有未保存内容，确定退出编辑模式吗？");
-    if (!confirmed) {
-      return;
-    }
-  }
-  if (discardChanges) {
-    reportEditor.value = latestDocumentText;
-  }
-  editorDirty = false;
-  reportEditor.hidden = true;
-  document.body.classList.remove("editor-mode");
-  editorModeToggle.hidden = false;
-  editorSaveBtn.hidden = true;
-  editorCancelBtn.hidden = true;
-  applyBlockDragSetting();
-  postEditorState();
 }
 
 function loadReaderSettings() {
@@ -1253,6 +1102,7 @@ function decorateReportHeading(element, level) {
 }
 
 function refreshOutlineLabels() {
+  if (window.LivePreview) { window.LivePreview.refreshLayout(); return; }
   for (const node of document.querySelectorAll("[data-outline-text]")) {
     const scope = node.dataset.outlineScope === "toc" ? "toc" : "content";
     setOutlineLabel(node, node.dataset.outlineNumber, node.dataset.outlineText, scope);
@@ -1368,6 +1218,7 @@ function scrollElementToViewport(target, { block = "center", behavior = "smooth"
 }
 
 function updateActiveToc() {
+  if (window.LivePreview) { window.LivePreview.scrollSpy(); return; }
   if (!toc || tocDock?.classList.contains("collapsed")) {
     return;
   }
@@ -1657,6 +1508,7 @@ function isBlockDragEnabled() {
 }
 
 function applyBlockDragSetting() {
+  if (window.LivePreview) { window.LivePreview.redecorate(); return; }
   document.documentElement.classList.toggle("block-drag-enabled", Boolean(readerSettings.enableBlockDrag));
   document.querySelectorAll(".md-drag-handle").forEach((node) => node.remove());
 
@@ -1743,53 +1595,6 @@ function extractMdBlockText(lines, element) {
     return "";
   }
   return lines.slice(start, end + 1).join("\n");
-}
-
-function serializeMarkdownContainer(container, lines) {
-  const parts = [];
-  for (const child of container.children) {
-    if (child.classList.contains("footnotes")) {
-      continue;
-    }
-    if (child.classList.contains("content-branch")) {
-      parts.push(serializeMarkdownBranch(child, lines));
-    } else if (child.dataset.mdStart) {
-      parts.push(extractMdBlockText(lines, child));
-    }
-  }
-  return parts.filter((part) => part.trim()).join("\n\n");
-}
-
-function serializeMarkdownBranch(branch, lines) {
-  const heading = branch.querySelector(":scope > .report-heading");
-  const body = branch.querySelector(":scope > .content-branch-body");
-  const headingText = heading ? extractMdBlockText(lines, heading) : "";
-  if (!body?.children.length) {
-    return headingText;
-  }
-  const bodyText = serializeMarkdownContainer(body, lines);
-  return bodyText ? `${headingText}\n\n${bodyText}` : headingText;
-}
-
-function serializeDocumentMarkdown() {
-  const preprocessed = preprocessMarkdownContent(latestDocumentText);
-  const lines = preprocessed.lines;
-  const chunks = [];
-
-  for (const markdownBody of document.querySelectorAll("#reportContent .markdown-body")) {
-    const contentRoot = markdownBody.querySelector(":scope > .content-root");
-    if (!contentRoot) {
-      continue;
-    }
-    chunks.push(serializeMarkdownContainer(contentRoot, lines));
-  }
-
-  const body = chunks.filter((chunk) => chunk.trim()).join("\n\n");
-  const footnotes = preprocessed.footnoteDefinitions.join("\n\n");
-  const annotations = preprocessed.annotations.map((annotation) => annotation.rawMarkdown).filter(Boolean).join("\n\n");
-  return [preprocessed.frontmatter, body, footnotes, preprocessed.annotationGuide, annotations, preprocessed.readingHighlights.join("\n")]
-    .filter((part) => part.trim())
-    .join("\n\n");
 }
 
 function createMdDragHandle() {
@@ -1884,90 +1689,6 @@ function showBlockDropIndicator(container, beforeNode) {
   } else {
     container.appendChild(indicator);
   }
-}
-
-function applyMarkdownReorder() {
-  if (!vscode || !isBlockDragEnabled()) {
-    return;
-  }
-  const nextText = serializeDocumentMarkdown();
-  if (nextText === latestDocumentText) {
-    return;
-  }
-  latestDocumentText = nextText;
-  vscode.postMessage({ type: "saveContent", content: nextText, persist: false });
-}
-
-function initBlockDrag() {
-  if (!reportContent) {
-    return;
-  }
-
-  reportContent.addEventListener("dragstart", (event) => {
-    if (!isBlockDragEnabled()) {
-      return;
-    }
-    const handle = event.target.closest(".md-drag-handle");
-    if (!handle) {
-      return;
-    }
-    const block = handle.closest(".md-block-draggable");
-    if (!block || !block.parentElement) {
-      return;
-    }
-    blockDragState = { block, container: block.parentElement, targetContainer: block.parentElement };
-    block.classList.add("md-block-dragging");
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", "md-block");
-  });
-
-  reportContent.addEventListener("dragend", () => {
-    blockDragState?.block?.classList.remove("md-block-dragging");
-    blockDragState = null;
-    clearBlockDropIndicators();
-  });
-
-  reportContent.addEventListener("dragover", (event) => {
-    if (!blockDragState) {
-      return;
-    }
-    if (event.target.closest(".md-drag-handle")) {
-      return;
-    }
-    const container = findBlockDropContainer(event.clientX, event.clientY, blockDragState.block);
-    if (!container) {
-      return;
-    }
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
-    blockDragState.targetContainer = container;
-    showBlockDropIndicator(container, getBlockDropTarget(container, event.clientY, blockDragState.block));
-  });
-
-  reportContent.addEventListener("drop", (event) => {
-    if (!blockDragState) {
-      return;
-    }
-    event.preventDefault();
-    const { block } = blockDragState;
-    const container =
-      blockDragState.targetContainer ||
-      findBlockDropContainer(event.clientX, event.clientY, block) ||
-      blockDragState.container;
-    if (!container) {
-      return;
-    }
-    const beforeNode = getBlockDropTarget(container, event.clientY, block);
-    if (beforeNode) {
-      container.insertBefore(block, beforeNode);
-    } else {
-      container.appendChild(block);
-    }
-    clearBlockDropIndicators();
-    blockDragState.block?.classList.remove("md-block-dragging");
-    blockDragState = null;
-    applyMarkdownReorder();
-  });
 }
 
 function pauseTocScrollSpy(durationMs = 900) {
@@ -2383,6 +2104,7 @@ function getSelectionElement(node) {
 }
 
 function getAnnotationSelection() {
+  if (window.LivePreview) return annotationDialog || window.ReaderHighlights?.isOpen() ? null : window.LivePreview.annotationSelection();
   if (document.body.classList.contains("editor-mode") || document.body.classList.contains("wysiwyg-mode") || annotationDialog || window.ReaderHighlights?.isOpen()) {
     return null;
   }
@@ -2468,7 +2190,7 @@ function updateAnnotationAction() {
   const button = ensureAnnotationAction();
   button.hidden = false;
   const left = Math.min(window.innerWidth - button.offsetWidth - 12, Math.max(12, info.rect.left + info.rect.width / 2 - button.offsetWidth / 2));
-  const top = Math.max(12, info.rect.top - button.offsetHeight - 8);
+  const top = Math.max(12, Math.min(innerHeight - button.offsetHeight - 12, info.rect.top - button.offsetHeight - 8));
   button.style.left = `${Math.round(left)}px`;
   button.style.top = `${Math.round(top)}px`;
 }
@@ -2705,6 +2427,13 @@ function findAnnotationQuoteMatch(annotation, rawQuote) {
 }
 
 function findAnnotationAnchor(annotation) {
+  if (window.LivePreview) {
+    return {
+      isConnected: true,
+      getBoundingClientRect() { const editor = window.LivePreview; return editor.view.coordsAtPos(editor.annotationPosition(annotation)) || editor.view.dom.getBoundingClientRect(); },
+      scrollIntoView() { window.LivePreview.goto(window.LivePreview.annotationPosition(annotation)); }
+    };
+  }
   const section = document.getElementById(annotation.fileId);
   if (!section) return null;
 
@@ -2757,6 +2486,7 @@ function getAnnotationTextNodes(anchor) {
 }
 
 function highlightAnnotationQuote(annotation) {
+  if (window.LivePreview) return [];
   const allHighlights = [];
   annotation.anchorElements = [];
   for (const rawQuote of getAnnotationChangeQuotes(annotation)) {
@@ -2849,6 +2579,7 @@ function activateAnnotation(annotation, { scrollToAnchor = false } = {}) {
 }
 
 function compareAnnotationAnchorOrder(left, right) {
+  if (window.LivePreview) return window.LivePreview.annotationPosition(left) - window.LivePreview.annotationPosition(right);
   const leftAnchor = left.anchorElement;
   const rightAnchor = right.anchorElement;
   if (leftAnchor === rightAnchor) return 0;
@@ -2941,7 +2672,7 @@ function renderAnnotationDock() {
       vscode?.postMessage({ type: "resolveAnnotation", annotationId: annotation.id });
     });
 
-    if (anchor && anchor !== document.getElementById(annotation.fileId)) {
+    if (!window.LivePreview && anchor && anchor !== document.getElementById(annotation.fileId)) {
       anchor.classList.add("has-annotation");
       anchorCounts.set(anchor, (anchorCounts.get(anchor) || 0) + 1);
     }
@@ -3669,32 +3400,6 @@ function replaceTableRowCellTask(line, cellIndex, checked) {
   return `|${cells.join("|")}|`;
 }
 
-function handleTableCellTaskToggle(lineIndex, cellIndex, checked, checkbox, wrapper) {
-  if (document.body.classList.contains("editor-mode") || !vscode || lineIndex < 0) {
-    checkbox.checked = !checked;
-    return;
-  }
-
-  const lines = latestDocumentText.split(/\r?\n/);
-  if (lineIndex >= lines.length) {
-    checkbox.checked = !checked;
-    return;
-  }
-
-  const nextLine = replaceTableRowCellTask(lines[lineIndex], cellIndex, checked);
-  if (nextLine === null) {
-    checkbox.checked = !checked;
-    return;
-  }
-
-  lines[lineIndex] = nextLine;
-  const nextText = lines.join("\n");
-  latestDocumentText = nextText;
-  wrapper.classList.toggle("table-task-cell--checked", checked);
-  checkbox.setAttribute("aria-label", checked ? "标记为未完成" : "标记为已完成");
-  vscode.postMessage({ type: "saveContent", content: nextText, persist: false });
-}
-
 function appendTableCellContent(parent, cellText, context, lineIndex, cellIndex) {
   const task = parseTableCellTask(cellText);
   if (!task) {
@@ -3734,38 +3439,6 @@ function appendTableCellContent(parent, cellText, context, lineIndex, cellIndex)
 
 function getTableRowCells(row) {
   return row && row.cells ? row.cells : row;
-}
-
-function handleTaskCheckboxToggle(lineIndex, checked, item, checkbox) {
-  if (document.body.classList.contains("editor-mode") || !vscode || lineIndex < 0) {
-    checkbox.checked = !checked;
-    return;
-  }
-
-  const lines = latestDocumentText.split(/\r?\n/);
-  if (lineIndex >= lines.length) {
-    checkbox.checked = !checked;
-    return;
-  }
-
-  const line = lines[lineIndex];
-  const blockquoteTask = /^(\s*>\s?)(\s*[-*+]\s+\[)([ xX])(\]\s+.+)$/.exec(line);
-  if (blockquoteTask) {
-    lines[lineIndex] = `${blockquoteTask[1]}${blockquoteTask[2]}${checked ? "x" : " "}${blockquoteTask[4]}`;
-  } else {
-    const task = /^(\s*[-*+]\s+\[)([ xX])(\]\s+.+)$/.exec(line);
-    if (!task) {
-      checkbox.checked = !checked;
-      return;
-    }
-    lines[lineIndex] = `${task[1]}${checked ? "x" : " "}${task[3]}`;
-  }
-
-  const nextText = lines.join("\n");
-  latestDocumentText = nextText;
-  item.classList.toggle("task-line--checked", checked);
-  checkbox.setAttribute("aria-label", checked ? "标记为未完成" : "标记为已完成");
-  vscode.postMessage({ type: "saveContent", content: nextText, persist: false });
 }
 
 function renderFootnoteRef(id, context) {
@@ -4376,6 +4049,7 @@ async function hydrateMermaid(root) {
     try {
       const id = `mermaid-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
       const { svg, bindFunctions } = await mermaid.render(id, source);
+      if (!block.isConnected || block.dataset.mermaidSource !== source) continue;
       const wrapper = document.createElement("div");
       wrapper.className = "mermaid-svg-root";
       wrapper.innerHTML = svg;
@@ -5363,3 +5037,29 @@ function slugify(value) {
 function makeFallbackAnchor(fileName, index, text) {
   return slugify(`${fileName}-${index}-${text}`) || `${fileName}-${index}`;
 }
+
+// The retained reader services only derive UI from source. CodeMirror owns every body edit.
+window.ReaderServices = {
+  post: message => hostVscode?.postMessage(message),
+  settings: () => readerSettings,
+  compactToc: () => setTocCollapsed(true, { persist: false }),
+  setText: text => { latestDocumentText = text; hasRenderedDocument = true; },
+  preprocess: preprocessMarkdownContent,
+  number: withOutlineNumbers,
+  properties: renderReadonlyFrontmatter,
+  inline: (parent, text) => appendInlineMarkdown(parent, text, { fileKey: "document", footnotes: new Map() }),
+  safeHtml: sanitizeHtmlToFragment,
+  hydrateMermaid,
+  annotationQuotes: getAnnotationChangeQuotes,
+  selectionChanged: () => { window.ReaderHighlights?.captureSelection(); updateAnnotationAction(); },
+  asides(text, headings, annotations) {
+    const collapsed = new Set([...toc.querySelectorAll('.toc-branch[data-collapsed="1"]')].map(b => b.querySelector('a[data-anchor]')?.dataset.anchor));
+    const tocInner = document.createElement("div"); tocInner.className = "toc-inner";
+    tocInner.appendChild(createFileToc({ name: "document.md", label: "目录", headings, numberedHeadings: headings }));
+    toc.replaceChildren(tocInner);
+    for (const branch of toc.querySelectorAll('.toc-branch')) if (collapsed.has(branch.querySelector('a[data-anchor]')?.dataset.anchor)) setTocBranchCollapsed(branch, true);
+    renderedAnnotations = annotations;
+    renderAnnotationDock();
+    window.ReaderHighlights?.render(text.split("\n"), text);
+  }
+};

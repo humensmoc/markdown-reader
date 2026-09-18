@@ -1,9 +1,12 @@
 import * as path from "path";
 import * as vscode from "vscode";
 import { updateReadingHighlight, type HighlightMessage } from "./readingHighlights";
-import { buildReportPayload } from "./reportData";
+import { LiveDocument, type LiveMessage } from "./liveDocument";
+import { normalizeText } from "./textChanges";
 
 type ViewerMessage =
+  | LiveMessage
+  | { type: "resolveImage"; href: string }
   | HighlightMessage
   | { type: "ready" }
   | { type: "requestReaderSettings" }
@@ -11,9 +14,7 @@ type ViewerMessage =
   | { type: "saveReaderStyle"; settings?: unknown }
   | { type: "openExternal"; href?: string }
   | { type: "openFile"; href?: string }
-  | { type: "saveContent"; content?: string; persist?: boolean }
   | { type: "setAutoOpenReaderMode"; enabled?: boolean }
-  | { type: "editorState"; dirty?: boolean; inEditorMode?: boolean; inWysiwygMode?: boolean }
   | {
       type: "addAnnotation";
       selectedText?: string;
@@ -31,6 +32,7 @@ type ViewerMessage =
 
 const READER_VIEW_TYPE = "meowReportMarkdown.viewer";
 const readerWebviews = new Set<vscode.Webview>();
+let activeReaderWebview: vscode.Webview | undefined;
 const textModeUris = new Set<string>();
 const readerIntentUris = new Set<string>();
 const openInReaderModeInflight = new Map<string, Promise<void>>();
@@ -322,11 +324,16 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider(READER_VIEW_TYPE, provider, {
+      supportsMultipleEditorsPerDocument: true,
       webviewOptions: {
         retainContextWhenHidden: true
       }
     })
   );
+
+  context.subscriptions.push(vscode.commands.registerCommand("meowReportMarkdown.toggleSource", () => {
+    void activeReaderWebview?.postMessage({ type: "toggleSource" });
+  }));
 
   context.subscriptions.push(
     vscode.commands.registerCommand("meowReportMarkdown.openPreview", async (uri?: vscode.Uri) => {
@@ -680,7 +687,7 @@ function setupAutoOpenReaderMode(context: vscode.ExtensionContext): void {
   );
 }
 
-class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
+export class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
   constructor(private readonly context: vscode.ExtensionContext) {}
 
   async resolveCustomTextEditor(
@@ -705,25 +712,13 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 
     webviewPanel.webview.options = {
       enableScripts: true,
-      localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, "media")]
+      localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, "media"), vscode.Uri.file(path.dirname(document.uri.fsPath)), ...(vscode.workspace.workspaceFolders || []).map(f => f.uri)]
     };
     registerReaderWebview(webviewPanel.webview);
+    activeReaderWebview = webviewPanel.webview;
+    const viewStateSub = webviewPanel.onDidChangeViewState(e => { if (e.webviewPanel.active) activeReaderWebview = e.webviewPanel.webview; });
 
     let disposed = false;
-    let ready = false;
-    let updateTimer: ReturnType<typeof setTimeout> | undefined;
-    let pendingUpdate = false;
-    let webviewEditorDirty = false;
-    let webviewInEditorMode = false;
-    let webviewInWysiwygMode = false;
-    let suppressDocumentUpdateUntil = 0;
-
-    const shouldSuppressDocumentUpdate = (): boolean => Date.now() < suppressDocumentUpdateUntil;
-
-    const suppressDocumentUpdates = (durationMs = 400): void => {
-      suppressDocumentUpdateUntil = Date.now() + durationMs;
-    };
-
     const postToWebview = async (message: unknown): Promise<void> => {
       if (disposed) {
         return;
@@ -735,64 +730,24 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       }
     };
 
-    const update = async (): Promise<void> => {
-      if (disposed) {
-        return;
-      }
-      if (!ready) {
-        pendingUpdate = true;
-        return;
-      }
-
-      pendingUpdate = false;
-      try {
-        const content = document.getText();
-        const payload = await buildReportPayload(document.uri, content);
-        if (disposed) {
-          return;
-        }
-        if (webviewEditorDirty && webviewInEditorMode) {
-          await postToWebview({
-            type: "documentChanged",
-            content,
-            payload
-          });
-          return;
-        }
-        await postToWebview({ type: "render", payload });
-      } catch (error) {
-        if (disposed) {
-          return;
-        }
-        const message = error instanceof Error ? error.message : String(error);
-        await postToWebview({
-          type: "render",
-          payload: {
-            ok: true,
-            title: "Report Markdown Viewer",
-            meta: message,
-            rootUri: document.uri.toString(),
-            files: []
-          }
-        });
-      }
-    };
-
-    const scheduleUpdate = (): void => {
-      if (disposed) {
-        return;
-      }
-      if (updateTimer) {
-        clearTimeout(updateTimer);
-      }
-      updateTimer = setTimeout(() => {
-        updateTimer = undefined;
-        void update();
-      }, 150);
-    };
+    const live = LiveDocument.attach(document, postToWebview);
+    const update = async (): Promise<void> => { await postToWebview(live.coordinator.snapshot()); };
 
     const messageSub = webviewPanel.webview.onDidReceiveMessage(async (message: ViewerMessage) => {
       if (disposed) {
+        return;
+      }
+
+      if (["applyEdits", "editorCommand", "compareDraft", "reloadLiveDocument"].includes(message.type)) {
+        await live.coordinator.receive(message as LiveMessage, postToWebview);
+        return;
+      }
+      if (message.type === "resolveImage") {
+        const href = String(message.href || "");
+        if (!/^[a-zA-Z][\w+.-]*:/.test(href)) {
+          const target = vscode.Uri.file(path.resolve(path.dirname(document.uri.fsPath), decodeURIComponent(href)));
+          await postToWebview({ type: "resolvedImage", href, url: webviewPanel.webview.asWebviewUri(target).toString() });
+        }
         return;
       }
 
@@ -807,17 +762,9 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       }
 
       if (message.type === "ready") {
-        if (ready) {
-          return;
-        }
-        ready = true;
         await postReaderSettings(webviewPanel.webview);
         await this.postReaderStyle(webviewPanel.webview);
         await update();
-        if (pendingUpdate) {
-          pendingUpdate = false;
-          await update();
-        }
         return;
       }
 
@@ -837,22 +784,6 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         return;
       }
 
-      if (message.type === "saveContent" && typeof message.content === "string") {
-        suppressDocumentUpdates(600);
-        await this.applyDocumentContent(document, message.content, {
-          saveToDisk: message.persist === true
-        });
-        webviewEditorDirty = false;
-        return;
-      }
-
-      if (message.type === "editorState") {
-        webviewEditorDirty = Boolean(message.dirty);
-        webviewInEditorMode = Boolean(message.inEditorMode);
-        webviewInWysiwygMode = Boolean(message.inWysiwygMode);
-        return;
-      }
-
       if (message.type === "saveReaderStyle") {
         try {
           const settings = await this.saveReaderStyle(message.settings);
@@ -869,10 +800,13 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         return;
       }
 
+      await live.coordinator.run(async () => {
       if (message.type === "saveReadingHighlight" || message.type === "deleteReadingHighlight") {
         try {
           const content = document.getText();
-          const next = updateReadingHighlight(content, message);
+          const isLive = Boolean((message as unknown as { livePreview?: boolean }).livePreview);
+          const edited = updateReadingHighlight(isLive ? normalizeText(content) : content, message);
+          const next = isLive && document.eol === vscode.EndOfLine.CRLF ? edited.replace(/\n/g, "\r\n") : edited;
           if (next !== content) {
             // All fragments share one undo entry. Never submit per-cell edits separately.
             const edit = new vscode.WorkspaceEdit();
@@ -942,65 +876,24 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         return;
       }
 
-      if (message.type === "requestReload") {
-        try {
-          const content = document.getText();
-          const payload = await buildReportPayload(document.uri, content);
-          if (disposed) {
-            return;
-          }
-          await postToWebview({
-            type: "reloadDocument",
-            content,
-            payload
-          });
-        } catch {
-          // Ignore reload failures.
-        }
-      }
-    });
+      });
 
-    const changeSub = vscode.workspace.onDidChangeTextDocument((event) => {
-      if (event.document.uri.toString() !== document.uri.toString()) {
-        return;
-      }
-      if (shouldSuppressDocumentUpdate()) {
-        return;
-      }
-      scheduleUpdate();
-    });
-
-    const saveSub = vscode.workspace.onDidSaveTextDocument((saved) => {
-      if (saved.uri.toString() !== document.uri.toString()) {
-        return;
-      }
-      if (shouldSuppressDocumentUpdate()) {
-        return;
-      }
-      scheduleUpdate();
+      if (message.type === "requestReload") await update();
     });
 
     webviewPanel.onDidDispose(() => {
       disposed = true;
       unregisterReaderWebview(webviewPanel.webview);
-      if (updateTimer) {
-        clearTimeout(updateTimer);
-      }
+      if (activeReaderWebview === webviewPanel.webview) activeReaderWebview = undefined;
+      viewStateSub.dispose();
       messageSub.dispose();
-      changeSub.dispose();
-      saveSub.dispose();
+      live.dispose();
     });
 
     // Register listeners before loading HTML so the initial "ready" message is not lost.
     webviewPanel.webview.html = this.getHtml(webviewPanel.webview);
 
-    // Fallback: if webview "ready" is missed, still push the first render.
-    setTimeout(() => {
-      if (!disposed && !ready) {
-        ready = true;
-        void update();
-      }
-    }, 250);
+
   }
 
   private async openExternal(href: string): Promise<void> {
@@ -1349,37 +1242,6 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     return true;
   }
 
-  private async applyDocumentContent(
-    document: vscode.TextDocument,
-    nextContent: string,
-    options: { saveToDisk?: boolean } = {}
-  ): Promise<void> {
-    const current = document.getText();
-    if (current === nextContent) {
-      return;
-    }
-
-    const fullRange = new vscode.Range(
-      document.positionAt(0),
-      document.positionAt(current.length)
-    );
-    const edit = new vscode.WorkspaceEdit();
-    edit.replace(document.uri, fullRange, nextContent);
-    const applied = await vscode.workspace.applyEdit(edit);
-    if (!applied) {
-      vscode.window.showErrorMessage("保存失败：无法写入文档变更。");
-      return;
-    }
-
-    if (options.saveToDisk) {
-      try {
-        await document.save();
-      } catch {
-        // Document may have been closed while saving.
-      }
-    }
-  }
-
   private async openFileFromHref(baseDocumentUri: vscode.Uri, href: string): Promise<void> {
     const target = this.resolveMarkdownHref(baseDocumentUri, href);
     if (!target) {
@@ -1446,8 +1308,8 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     const mermaidUri = webview
       .asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "mermaid.min.js"))
       .with({ query: `v=${cacheKey}` });
-    const wysiwygUri = webview
-      .asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "wysiwygEditor.js"))
+    const livePreviewUri = webview
+      .asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "livePreview.js"))
       .with({ query: `v=${cacheKey}` });
     const highlightsUri = webview
       .asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "readerHighlights.js"))
@@ -1455,6 +1317,7 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     const highlightFormatUri = webview
       .asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "highlightFormat.js"))
       .with({ query: `v=${cacheKey}` });
+    const liveCssUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "livePreview.css"));
     const nonce = cacheKey;
     const mathUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "readerMath.js")).with({ query: `v=${cacheKey}` });
     const katexUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "katex", "katex.min.js"));
@@ -1468,6 +1331,7 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="${katexCssUri}" />
   <link rel="stylesheet" href="${cssUri}" />
+  <link rel="stylesheet" href="${liveCssUri}" />
   <title>Report Markdown Viewer</title>
 </head>
 <body>
@@ -1482,13 +1346,6 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     </aside>
     <aside id="annotationDock" class="annotation-dock annotation-right" aria-label="文档批注" hidden></aside>
     <article id="reportContent" class="report-content"></article>
-    <textarea
-      id="reportEditor"
-      class="report-editor"
-      hidden
-      spellcheck="false"
-      aria-label="Markdown 编辑器"
-    ></textarea>
   </main>
   <div id="annotationNavigationRoot" class="annotation-navigation-root" hidden aria-label="未解决批注导航">
     <span id="openAnnotationCount" class="annotation-open-count" aria-live="polite">未解决批注 0</span>
@@ -1498,11 +1355,6 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
   <div id="annotationHistoryRoot" class="annotation-history-root" hidden>
     <button id="annotationHistoryButton" type="button" class="editor-mode-btn annotation-history-button" aria-expanded="false" aria-controls="annotationHistoryPanel">已解决批注 0</button>
     <section id="annotationHistoryPanel" class="annotation-history-panel" hidden aria-label="已完成批注"></section>
-  </div>
-  <div class="editor-mode-root">
-    <button id="editorModeToggle" type="button" class="editor-mode-btn" aria-pressed="false">编辑</button>
-    <button id="editorSaveBtn" type="button" class="editor-mode-btn primary" hidden>保存并预览</button>
-    <button id="editorCancelBtn" type="button" class="editor-mode-btn" hidden>取消</button>
   </div>
   <div class="reader-tools-root">
     <button id="reloadDocumentBtn" type="button" class="reader-tool-button" title="重新加载文档" aria-label="重新加载文档">
@@ -1556,9 +1408,9 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       </section>
       <section class="reader-settings-group">
         <h2 class="reader-settings-label">编辑</h2>
-        <label class="reader-settings-switch" for="enableWysiwygMode">
-          <span>所见即所得编辑</span>
-          <input id="enableWysiwygMode" type="checkbox" />
+        <label class="reader-settings-switch" for="showMarkdownSource">
+          <span>显示全部 Markdown 标记</span>
+          <input id="showMarkdownSource" type="checkbox" />
           <span class="reader-settings-switch-ui" aria-hidden="true"></span>
         </label>
       </section>
@@ -1579,7 +1431,7 @@ class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
   <script nonce="${nonce}" src="${highlightFormatUri}"></script>
   <script nonce="${nonce}" src="${highlightsUri}"></script>
   <script nonce="${nonce}" src="${jsUri}"></script>
-  <script nonce="${nonce}" src="${wysiwygUri}"></script>
+  <script nonce="${nonce}" src="${livePreviewUri}"></script>
 </body>
 </html>`;
   }

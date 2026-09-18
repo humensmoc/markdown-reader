@@ -39,6 +39,7 @@
     return result;
   }
   function captureSelection() {
+    if (window.LivePreview) { if (!panel && !busy) { sourceDocument = window.LivePreview.bridge.text; pending = window.LivePreview.captureHighlight(); } return; }
     const selection = window.getSelection();
     if (panel || busy || editing() || !selection?.rangeCount || selection.isCollapsed) return;
     const range = selection.getRangeAt(0), container = root();
@@ -108,7 +109,7 @@
   }
   function render(lines, content) {
     sourceDocument = content;
-    pending = null;
+    if (!panel) pending = null;
     hideTooltip();
     marks = [];
     for (const line of lines || []) {
@@ -119,6 +120,7 @@
             typeof mark.comment === "string" && typeof mark.prefix === "string" && typeof mark.suffix === "string") marks.push({ ...mark, raw });
       } catch { /* Invalid metadata remains in the source file. */ }
     }
+    if (window.LivePreview) return;
     const native = ReaderHighlightFormat.parse(content).marks;
     const elements = [...root()?.querySelectorAll("mark.reading-native-highlight") || []].filter((el) => !el.closest(".footnotes"));
     native.forEach((item, i) => {
@@ -131,6 +133,7 @@
     repaint();
   }
   function repaint() {
+    if (window.LivePreview) return;
     ranges.clear();
     if (!CSS.highlights || !window.Highlight) return;
     const index = textIndex();
@@ -156,7 +159,7 @@
   }
   function save(mark, deleting = false) {
     if (busy) return;
-    if (!CSS.highlights || !window.Highlight) { showAnnotationToast("当前编辑器版本不支持划词高亮，请升级 VS Code/Cursor。", true); return; }
+    if (!window.LivePreview && (!CSS.highlights || !window.Highlight)) { showAnnotationToast("当前编辑器版本不支持划词高亮，请升级 VS Code/Cursor。", true); return; }
     const { raw, rect, element, skipped, groupSize, ...highlight } = mark;
     saveNotice = skipped ? "；已跳过选区中的公式或代码内容" : "";
     busy = true;
@@ -171,6 +174,7 @@
     save({ ...pending, color: "yellow" });
   }
   function compose(mark = pending) {
+    if (window.LivePreview) sourceDocument = window.LivePreview.bridge.text;
     if (!mark || busy || editing()) return;
     if (mark.unsupportedOnly) { showAnnotationToast("选区是公式或代码块，暂不支持高亮。", true); return; }
     const draft = { ...mark, color: "yellow" };
@@ -204,6 +208,7 @@
     textarea.focus();
   }
   function hit(event) {
+    if (window.LivePreview) return window.LivePreview.highlightAt(event);
     if (!root()?.contains(event.target) || editing()) return [];
     return marks.filter((mark) => Array.from(ranges.get(mark.id)?.getClientRects() || []).some((r) =>
       event.clientX >= r.left && event.clientX <= r.right && event.clientY >= r.top && event.clientY <= r.bottom));

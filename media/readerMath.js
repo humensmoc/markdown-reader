@@ -129,7 +129,7 @@
     return null;
   }
 
-  const api = { protect, restore, restoreText, readBlock, render };
+  const api = { readMath, protect, restore, restoreText, readBlock, render };
   root.ReaderMath = api;
   if (typeof module !== "undefined") module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

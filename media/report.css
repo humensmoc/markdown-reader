@@ -4,6 +4,8 @@
   --toc-width: 280px;
   --toc-offset-x: -28px;
   --toc-offset-y: 0px;
+  --toc-margin-top: 32px;
+  --toc-margin-bottom: 32px;
   --font-scale: 1;
   --reader-font-size: 16px;
   --reader-line-height: 1.5;
@@ -198,16 +200,26 @@ body.reader-settings-open .annotation-navigation-root {
 }
 
 .toc-dock {
+  /* Keep the dock usable when the window is too short for the requested margins. */
+  --toc-margin-limit: max(0px, calc((100vh - var(--topbar-height) - 80px) / 2));
+  --toc-top-inset: min(var(--toc-margin-top), var(--toc-margin-limit));
+  --toc-bottom-inset: min(var(--toc-margin-bottom), var(--toc-margin-limit));
+  --toc-available-height: calc(100vh - var(--topbar-height) - var(--toc-top-inset) - var(--toc-bottom-inset));
   width: var(--toc-width);
   display: flex;
   flex-direction: column;
   position: fixed;
   left: max(10px, calc((100vw - var(--readable-line-width)) / 4 - var(--toc-width) / 2 + var(--toc-offset-x)));
-  top: calc(50vh + var(--topbar-height) / 2 + var(--toc-offset-y));
-  transform: translateY(-50%);
+  top: calc(var(--topbar-height) + var(--toc-top-inset) + var(--toc-available-height) / 2);
+  /* Clamp the offset using the dock's own height so both edge gaps stay clear. */
+  transform: translateY(clamp(
+    calc(var(--toc-available-height) / -2),
+    calc(-50% + var(--toc-offset-y)),
+    calc(var(--toc-available-height) / 2 - 100%)
+  ));
   z-index: 20;
   height: auto;
-  max-height: calc(100vh - var(--topbar-height) - 20px);
+  max-height: var(--toc-available-height);
   border: 1px solid var(--line-strong);
   border-radius: 10px;
   background: color-mix(in srgb, var(--paper) 96%, transparent);
@@ -230,7 +242,7 @@ body.reader-settings-open .annotation-navigation-root {
 }
 
 .toc-dock.collapsed {
-  top: 10px;
+  top: calc(var(--topbar-height) + var(--toc-top-inset));
   transform: none;
   width: auto;
   height: auto;
@@ -2312,6 +2324,8 @@ body.wysiwyg-mode .annotation-marker {
 
 .toc-position-card {
   width: min(420px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
   padding: 18px;
   border: 1px solid var(--line-strong);
   border-radius: 10px;
@@ -2390,6 +2404,8 @@ body.wysiwyg-mode .annotation-marker {
   right: 0;
   bottom: calc(100% + 10px);
   width: min(280px, calc(100vw - 36px));
+  max-height: calc(100vh - 84px);
+  overflow-y: auto;
   padding: 12px;
   border: 1px solid var(--line-strong);
   border-radius: 12px;

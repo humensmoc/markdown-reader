@@ -6,3 +6,11 @@ docs/**
 *.ts
 tsconfig.json
 **/.DS_Store
+
+webview/**
+scripts/**
+media/*.map
+tsconfig.webview.json
+
+.vscode-test/**
+.agents/**

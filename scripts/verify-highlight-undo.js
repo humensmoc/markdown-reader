@@ -20,7 +20,7 @@ exports.run = async function () {
   visit(ast);
   assert(branch, "Locate the production highlight message handler");
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-  const handler = new AsyncFunction("document", "message", "vscode", "updateReadingHighlight", "postToWebview",
+  const handler = new AsyncFunction("document", "message", "vscode", "updateReadingHighlight", "postToWebview", "normalizeText",
     ts.transpileModule(branch, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText);
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "markdown-reader-undo-"));
   const resultPath = process.env.HIGHLIGHT_UNDO_RESULT || path.join(directory, "result.json");
@@ -34,7 +34,7 @@ exports.run = async function () {
     const message = { type: "saveReadingHighlight", expectedDocument: before, highlight: {
       id: "undo-test", exact: "重复 解释 空洞 细节 最后一段", prefix: "", suffix: "", occurrences: 1, color: "yellow", comment: "整组评论"
     } };
-    await handler(document, message, vscode, updateReadingHighlight, async (value) => responses.push(value));
+    await handler(document, message, vscode, updateReadingHighlight, async (value) => responses.push(value), text => text.replace(/\r\n/g, "\n"));
     assert.equal(responses.at(-1).type, "readingHighlightSaved");
     const saved = document.getText();
     assert(saved.includes("| ==重复==[^mark-group-undo-test]"));
@@ -44,7 +44,7 @@ exports.run = async function () {
     assert.equal(document.getText(), before, "One undo restores all cells, paragraphs and comment");
     await vscode.commands.executeCommand("redo");
     assert.equal(document.getText(), saved, "One redo restores the batch");
-    await handler(document, message, vscode, updateReadingHighlight, async (value) => responses.push(value));
+    await handler(document, message, vscode, updateReadingHighlight, async (value) => responses.push(value), text => text.replace(/\r\n/g, "\n"));
     assert.equal(responses.at(-1).type, "readingHighlightError");
     assert.equal(document.getText(), saved, "Stale selection cannot partially change the document");
     await document.save();

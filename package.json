@@ -2,7 +2,7 @@
   "name": "markdown-reader",
   "displayName": "Markdown Reader",
   "description": "Read and edit Markdown with a floating TOC, citations, Obsidian properties, persistent styles, and inline AI-friendly annotations.",
-  "version": "0.0.8",
+  "version": "0.0.11",
   "publisher": "humensmoc",
   "engines": {
     "vscode": "^1.90.0"
@@ -20,6 +20,10 @@
       {
         "command": "meowReportMarkdown.openPreview",
         "title": "Open with Markdown Reader"
+      },
+      {
+        "command": "meowReportMarkdown.toggleSource",
+        "title": "Markdown Reader: 显示/隐藏全部 Markdown 标记"
       }
     ],
     "customEditors": [
@@ -64,7 +68,7 @@
   "main": "./out/extension.js",
   "scripts": {
     "copy-mermaid": "node -e \"require('fs').copyFileSync('node_modules/mermaid/dist/mermaid.min.js','media/mermaid.min.js')\"",
-    "compile": "tsc -p ./ && npm run copy-mermaid && npm run copy-katex",
+    "compile": "tsc -p ./ && npm run build:webview && npm run copy-mermaid && npm run copy-katex",
     "verify-frontmatter": "node scripts/verify-frontmatter.js",
     "verify-annotations": "node scripts/verify-annotations.js",
     "verify-highlights": "node scripts/verify-reading-highlights.js",
@@ -72,17 +76,33 @@
     "package": "vsce package --allow-missing-repository --no-rewrite-relative-links --skip-license",
     "package:local": "npm run compile && npm run package",
     "copy-katex": "node scripts/copy-katex.js",
-    "verify-math": "node scripts/verify-math.js"
+    "verify-math": "node scripts/verify-math.js",
+    "build:webview": "tsc -p tsconfig.webview.json && node scripts/build-webview.js",
+    "verify-sync": "node scripts/verify-document-sync.js",
+    "verify-live": "node scripts/verify-live-preview.js && node scripts/verify-live-highlights.js && node scripts/verify-live-extended.js && node scripts/verify-live-layout.js",
+    "verify-host": "node scripts/run-live-host.js",
+    "test": "npm run compile && npm run verify-frontmatter && npm run verify-annotations && npm run verify-highlights && npm run verify-sync && npm run verify-live && npm run verify-math"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/state": "^6.7.5",
+    "@codemirror/view": "^6.43.12",
+    "@lezer/highlight": "^1.2.3",
+    "@lezer/markdown": "^1.7.2",
+    "diff": "^9.0.0",
     "katex": "0.16.47",
     "mermaid": "^11.4.0"
   },
   "devDependencies": {
     "@playwright/test": "1.56.1",
+    "@types/diff": "^7.0.2",
     "@types/node": "^20.17.57",
     "@types/vscode": "^1.90.0",
+    "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^2.32.0",
+    "esbuild": "^0.28.2",
     "typescript": "^5.8.3"
   }
 }
