@@ -72,6 +72,10 @@
     "verify-frontmatter": "node scripts/verify-frontmatter.js",
     "verify-annotations": "node scripts/verify-annotations.js",
     "verify-highlights": "node scripts/verify-reading-highlights.js",
+    "verify-mermaid-style": "node scripts/verify-mermaid-style.js",
+    "verify-render": "node scripts/verify-render.js",
+    "verify-images": "node scripts/verify-images.js",
+    "verify": "npm run compile && node scripts/verify-frontmatter.js && node scripts/verify-mermaid-style.js && node scripts/verify-render.js && node scripts/verify-images.js",
     "watch": "tsc -watch -p ./",
     "package": "vsce package --allow-missing-repository --no-rewrite-relative-links --skip-license",
     "package:local": "npm run compile && npm run package",
@@ -81,7 +85,7 @@
     "verify-sync": "node scripts/verify-document-sync.js",
     "verify-live": "node scripts/verify-live-preview.js && node scripts/verify-live-highlights.js && node scripts/verify-live-extended.js && node scripts/verify-live-layout.js",
     "verify-host": "node scripts/run-live-host.js",
-    "test": "npm run compile && npm run verify-frontmatter && npm run verify-annotations && npm run verify-highlights && npm run verify-sync && npm run verify-live && npm run verify-math"
+    "test": "npm run compile && npm run verify-frontmatter && npm run verify-annotations && npm run verify-highlights && npm run verify-sync && npm run verify-live && npm run verify-math && npm run verify-mermaid-style && npm run verify-render && npm run verify-images"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

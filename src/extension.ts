@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import { updateReadingHighlight, type HighlightMessage } from "./readingHighlights";
 import { LiveDocument, type LiveMessage } from "./liveDocument";
 import { normalizeText } from "./textChanges";
+import { locateImage, resolveVaultRoot } from "./reportData";
 
 type ViewerMessage =
   | LiveMessage
@@ -303,6 +304,43 @@ async function openInReaderModeInternal(uri: vscode.Uri): Promise<void> {
   }
 
   throw lastError;
+}
+
+/**
+ * Resource roots the reader webview may load local files from. Besides the bundled `media`
+ * folder this must include the document folder, its Obsidian vault / workspace root and every
+ * workspace folder, otherwise relative image paths in the Markdown resolve to blocked URIs.
+ */
+function buildLocalResourceRoots(extensionUri: vscode.Uri, documentUri: vscode.Uri): vscode.Uri[] {
+  const roots: vscode.Uri[] = [vscode.Uri.joinPath(extensionUri, "media")];
+  const seen = new Set(roots.map((root) => root.toString()));
+
+  const addRoot = (dir: string | undefined): void => {
+    if (!dir) return;
+    let uri: vscode.Uri;
+    try {
+      uri = vscode.Uri.file(dir);
+    } catch {
+      return;
+    }
+    const key = uri.toString();
+    if (!seen.has(key)) {
+      seen.add(key);
+      roots.push(uri);
+    }
+  };
+
+  const documentDir = path.dirname(documentUri.fsPath);
+  addRoot(documentDir);
+
+  const folder = vscode.workspace.getWorkspaceFolder(documentUri);
+  addRoot(folder?.uri.fsPath);
+  addRoot(resolveVaultRoot(documentDir, folder?.uri.fsPath));
+  for (const workspaceFolder of vscode.workspace.workspaceFolders || []) {
+    addRoot(workspaceFolder.uri.fsPath);
+  }
+
+  return roots;
 }
 
 async function openInReaderMode(uri: vscode.Uri): Promise<void> {
@@ -712,7 +750,7 @@ export class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProv
 
     webviewPanel.webview.options = {
       enableScripts: true,
-      localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, "media"), vscode.Uri.file(path.dirname(document.uri.fsPath)), ...(vscode.workspace.workspaceFolders || []).map(f => f.uri)]
+      localResourceRoots: buildLocalResourceRoots(this.context.extensionUri, document.uri)
     };
     registerReaderWebview(webviewPanel.webview);
     activeReaderWebview = webviewPanel.webview;
@@ -745,7 +783,20 @@ export class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProv
       if (message.type === "resolveImage") {
         const href = String(message.href || "");
         if (!/^[a-zA-Z][\w+.-]*:/.test(href)) {
-          const target = vscode.Uri.file(path.resolve(path.dirname(document.uri.fsPath), decodeURIComponent(href)));
+          const documentDir = path.dirname(document.uri.fsPath);
+          const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+          let absolute: string;
+          try {
+            // Document-relative first, then vault-relative and vault-wide file name lookup.
+            absolute = locateImage(
+              decodeURIComponent(href),
+              documentDir,
+              resolveVaultRoot(documentDir, folder?.uri.fsPath)
+            ) ?? path.resolve(documentDir, decodeURIComponent(href));
+          } catch {
+            absolute = path.resolve(documentDir, decodeURIComponent(href));
+          }
+          const target = vscode.Uri.file(absolute);
           await postToWebview({ type: "resolvedImage", href, url: webviewPanel.webview.asWebviewUri(target).toString() });
         }
         return;

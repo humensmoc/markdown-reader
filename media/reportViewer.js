@@ -61,6 +61,7 @@ let annotationAction = null;
 let annotationDialog = null;
 let annotationToastTimer = null;
 let renderedAnnotations = [];
+let currentImageContext = { images: {}, missing: new Set(), imageBaseUri: "", vaultBaseUri: "" };
 let annotationPositionFrame = null;
 let lastAnnotationNormalizationKey = "";
 let readerStyleDialog = null;
@@ -1081,14 +1082,14 @@ function setOutlineLabel(element, outlineNumber, text, scope, context = {}) {
     const textSpan = document.createElement("span");
     textSpan.className = "outline-text";
     if (scope === "content") appendInlineMarkdown(textSpan, label, context);
-    else textSpan.textContent = label.replace(/==/g, "");
+    else fillOutlineText(textSpan, label, scope);
 
     element.append(numberSpan, textSpan);
   } else {
     const textSpan = document.createElement("span");
     textSpan.className = "outline-text";
     if (scope === "content") appendInlineMarkdown(textSpan, label, context);
-    else textSpan.textContent = label.replace(/==/g, "");
+    else fillOutlineText(textSpan, label, scope);
     element.appendChild(textSpan);
   }
 
@@ -1523,7 +1524,7 @@ function applyBlockDragSetting() {
 
   for (const root of document.querySelectorAll("#reportContent .markdown-body")) {
     annotateContentBranches(root);
-    root.querySelectorAll("p.md-block:not(.list-line)").forEach((paragraph) => {
+    root.querySelectorAll("p.md-block:not(.list-line), .md-outline-block.md-block").forEach((paragraph) => {
       paragraph.classList.add("md-block-draggable");
     });
     root
@@ -1816,6 +1817,13 @@ function renderReport(payload) {
     renderError("No markdown content found.");
     return;
   }
+
+  currentImageContext = {
+    images: payload.images && typeof payload.images === "object" ? payload.images : {},
+    missing: new Set(Array.isArray(payload.missingImages) ? payload.missingImages : []),
+    imageBaseUri: typeof payload.imageBaseUri === "string" ? payload.imageBaseUri : "",
+    vaultBaseUri: typeof payload.vaultBaseUri === "string" ? payload.vaultBaseUri : ""
+  };
 
   const tocInner = document.createElement("div");
   tocInner.className = "toc-inner";
@@ -3680,6 +3688,41 @@ function isCodeFenceClose(line, openFence) {
   return /^\s*$/.test(fence.remainder);
 }
 
+const TAB_WIDTH = 4;
+const MAX_OUTLINE_DEPTH = 12;
+
+/** Leading indentation of a line measured in columns (a tab counts as TAB_WIDTH). */
+function measureIndent(line) {
+  let columns = 0;
+  for (const char of String(line)) {
+    if (char === "\t") columns += TAB_WIDTH;
+    else if (char === " ") columns += 1;
+    else break;
+  }
+  return columns;
+}
+
+/** Smallest non-zero indentation in a block, used as one nesting level. */
+function inferIndentUnit(indents) {
+  let unit = 0;
+  for (const indent of indents) {
+    if (indent > 0 && (unit === 0 || indent < unit)) {
+      unit = indent;
+    }
+  }
+  return unit || TAB_WIDTH;
+}
+
+function applyIndentDepth(element, indent, unit) {
+  const effectiveUnit = unit > 0 ? unit : TAB_WIDTH;
+  const depth =
+    indent > 0
+      ? Math.min(MAX_OUTLINE_DEPTH, Math.max(1, Math.round(indent / effectiveUnit)))
+      : 0;
+  element.dataset.depth = String(depth);
+  element.style.setProperty("--md-indent-level", String(depth));
+}
+
 function renderMarkdown(content, file) {
   const fragment = document.createDocumentFragment();
   const preprocessed = preprocessMarkdownContent(content);
@@ -3688,7 +3731,8 @@ function renderMarkdown(content, file) {
     fileKey: slugify(file.name),
     footnotes: preprocessed.footnotes,
     footnoteIndex: new Map(),
-    footnoteRefs: []
+    footnoteRefs: [],
+    imageContext: currentImageContext
   };
   renderedAnnotations.push(
     ...preprocessed.annotations.map((annotation) => ({
@@ -3706,18 +3750,66 @@ function renderMarkdown(content, file) {
   let codeStartLine = -1;
   let tableRows = [];
   let headingIndex = 0;
+  let listRunItems = [];
+  let listRunUnit = 0;
+
+  function resetListIndentRun() {
+    listRunItems = [];
+    listRunUnit = 0;
+  }
 
   function flushParagraph() {
     if (!paragraph.length) {
       return;
     }
-    const p = document.createElement("p");
-    appendInlineMarkdown(p, paragraph.join(" "), context);
-    tagMdBlock(p, paragraphStartLine, paragraphEndLine, { draggable: true });
-    fragment.appendChild(p);
+
+    const entries = paragraph;
+    const startLine = paragraphStartLine;
+    const endLine = paragraphEndLine;
     paragraph = [];
     paragraphStartLine = -1;
     paragraphEndLine = -1;
+
+    // A plain run of lines is a soft-wrapped paragraph. As soon as the author indents
+    // some lines, the run is an outline written without list markers (common in Obsidian
+    // notes): keep every line separate and preserve its nesting depth.
+    if (!entries.some((entry) => entry.indent > 0)) {
+      const p = document.createElement("p");
+      appendInlineMarkdown(p, entries.map((entry) => entry.text).join(" "), context);
+      tagMdBlock(p, startLine, endLine, { draggable: true });
+      fragment.appendChild(p);
+      return;
+    }
+
+    // Indented lines that continue a list item keep that list's level width, so a
+    // continuation is not re-levelled against its own indentation alone.
+    const unit =
+      listRunUnit > 0 ? listRunUnit : inferIndentUnit(entries.map((entry) => entry.indent));
+    const block = document.createElement("div");
+    block.className = "md-outline-block";
+    for (const entry of entries) {
+      const lineEl = document.createElement("div");
+      lineEl.className = "md-indent-line";
+      applyIndentDepth(lineEl, entry.indent, unit);
+      lineEl.dataset.mdStart = String(entry.line);
+      lineEl.dataset.mdEnd = String(entry.line);
+      appendInlineMarkdown(lineEl, entry.text, context);
+      block.appendChild(lineEl);
+    }
+    tagMdBlock(block, startLine, endLine, { draggable: true });
+    fragment.appendChild(block);
+  }
+
+  function registerListIndent(element, indent) {
+    if (indent > 0 && (listRunUnit === 0 || indent < listRunUnit)) {
+      listRunUnit = indent;
+      // The unit shrank as the run went on: re-level the items already emitted.
+      for (const item of listRunItems) {
+        applyIndentDepth(item.element, item.indent, listRunUnit);
+      }
+    }
+    listRunItems.push({ element, indent });
+    applyIndentDepth(element, indent, listRunUnit);
   }
 
   function flushTable() {
@@ -3770,6 +3862,12 @@ function renderMarkdown(content, file) {
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
     const line = lines[lineIndex];
+    const isListLine = /^\s*(?:[-*+]\s+|\d+\.\s+)/.test(line);
+    // A contiguous list keeps one indentation unit. An indented continuation line still
+    // belongs to that run; only unindented content or a new block ends it.
+    if (line.trim() && !isListLine && measureIndent(line) === 0) {
+      resetListIndentRun();
+    }
     const fence = parseCodeFenceLine(line);
     if (fence) {
       if (inCode) {
@@ -3884,29 +3982,32 @@ function renderMarkdown(content, file) {
         continue;
       }
     }
-    const task = /^\s*[-*+]\s+\[([ xX])\]\s+(.+)$/.exec(line);
+    const task = /^(\s*)[-*+]\s+\[([ xX])\]\s+(.+)$/.exec(line);
     if (task) {
       flushParagraph();
       flushTable();
-      const taskItem = renderTaskListItem(task[1].toLowerCase() === "x", task[2].trim(), context, lineIndex);
+      const taskItem = renderTaskListItem(task[2].toLowerCase() === "x", task[3].trim(), context, lineIndex);
+      registerListIndent(taskItem, measureIndent(task[1]));
       tagMdBlock(taskItem, lineIndex, lineIndex, { draggable: true });
       fragment.appendChild(taskItem);
       continue;
     }
-    const unordered = /^\s*[-*+]\s+(.+)$/.exec(line);
-    const ordered = /^\s*(\d+)\.\s+(.+)$/.exec(line);
+    const unordered = /^(\s*)[-*+]\s+(.+)$/.exec(line);
+    const ordered = /^(\s*)(\d+)\.\s+(.+)$/.exec(line);
     if (unordered || ordered) {
       flushParagraph();
       flushTable();
+      const indent = measureIndent((ordered || unordered)[1]);
       const item = document.createElement("p");
       item.className = `list-line ${ordered ? "ordered-line" : "unordered-line"}`;
       const marker = document.createElement("span");
       marker.className = "list-marker";
-      marker.textContent = ordered ? `${ordered[1]}.` : "•";
+      marker.textContent = ordered ? `${ordered[2]}.` : "•";
       const body = document.createElement("span");
       body.className = "list-body";
-      appendInlineMarkdown(body, ordered ? ordered[2].trim() : unordered[1].trim(), context);
+      appendInlineMarkdown(body, ordered ? ordered[3].trim() : unordered[2].trim(), context);
       item.append(marker, body);
+      registerListIndent(item, indent);
       tagMdBlock(item, lineIndex, lineIndex, { draggable: true });
       fragment.appendChild(item);
       continue;
@@ -3916,7 +4017,7 @@ function renderMarkdown(content, file) {
       paragraphStartLine = lineIndex;
     }
     paragraphEndLine = lineIndex;
-    paragraph.push(line.trim());
+    paragraph.push({ text: line.trim(), indent: measureIndent(line), line: lineIndex });
   }
   flushParagraph();
   flushTable();
@@ -4120,9 +4221,9 @@ function ensureMermaidModal() {
   document.body.appendChild(modal);
 }
 
-function openMermaidModal(block) {
-  const svgRoot = block.querySelector(".mermaid-svg-root svg");
-  if (!svgRoot) {
+/** Opens the shared fullscreen viewer with any content node (mermaid SVG or an image). */
+function openMediaModal(contentNode, options = {}) {
+  if (!contentNode) {
     return;
   }
 
@@ -4133,12 +4234,21 @@ function openMermaidModal(block) {
     return;
   }
 
-  content.replaceChildren(svgRoot.cloneNode(true));
-  const viewBox = svgRoot.viewBox.baseVal;
-  const bounds = svgRoot.getBoundingClientRect();
+  const kind = options.kind || "mermaid";
+  content.replaceChildren(contentNode);
+  modal.dataset.mediaKind = kind;
+  modal.classList.toggle("is-image", kind === "image");
+  modal
+    .querySelector(".mermaid-modal-panel")
+    ?.setAttribute("aria-label", options.label || "全屏预览");
+
+  // The inserted node is a detached clone, so the view box carries the intrinsic size that
+  // fitting needs; images have none and are sized by CSS instead.
+  const viewBox = contentNode.viewBox?.baseVal;
+  const bounds = contentNode.getBoundingClientRect();
   mermaidModalState = {
-    width: viewBox.width || bounds.width,
-    height: viewBox.height || bounds.height,
+    width: viewBox?.width || bounds.width,
+    height: viewBox?.height || bounds.height,
     scale: 1,
     offsetX: 0,
     offsetY: 0,
@@ -4155,6 +4265,30 @@ function openMermaidModal(block) {
   modal.querySelector('[data-mermaid-action="close"]')?.focus();
 }
 
+function openImageModal(img) {
+  if (!img?.src) {
+    return;
+  }
+  const clone = img.cloneNode(true);
+  // Drop the in-document width so the viewer can size the image to the viewport.
+  clone.removeAttribute("style");
+  clone.removeAttribute("loading");
+  clone.className = "media-modal-image";
+  openMediaModal(clone, {
+    kind: "image",
+    label: img.alt ? `图片预览：${img.alt}` : "图片预览"
+  });
+}
+
+function openMermaidModal(block) {
+  const svgRoot = block.querySelector(".mermaid-svg-root svg");
+  if (!svgRoot) {
+    return;
+  }
+
+  openMediaModal(svgRoot.cloneNode(true), { kind: "mermaid", label: "Mermaid 全屏预览" });
+}
+
 function closeMermaidModal() {
   const modal = document.getElementById("mermaidModal");
   if (!modal || modal.hidden) {
@@ -4164,6 +4298,8 @@ function closeMermaidModal() {
   modal.hidden = true;
   document.body.classList.remove("mermaid-modal-open");
   modal.classList.remove("is-dragging");
+  modal.classList.remove("is-image");
+  delete modal.dataset.mediaKind;
   modal.querySelector(".mermaid-modal-content")?.replaceChildren();
   modal.querySelector(".mermaid-modal-viewport")?.classList.remove("is-draggable");
   modal.querySelector(".mermaid-modal-viewport")?.classList.remove("is-dragging");
@@ -4423,6 +4559,16 @@ function renderSourceLine(sourceLine, context) {
   return item;
 }
 
+/**
+ * Renders a heading/TOC label with inline formatting so Obsidian `==highlight==` and
+ * emphasis markers do not leak into the outline. `appendInlineText` is used deliberately:
+ * it formats without turning wikilinks into nested links inside TOC entries.
+ */
+function fillOutlineText(target, label, scope) {
+  void scope;
+  appendInlineText(target, label);
+}
+
 function stripOutlinePrefix(text) {
   return String(text || "")
     .trim()
@@ -4536,7 +4682,22 @@ function renderInlineMarkdownContent(text, context = {}) {
       appendInlineText(fragment, value.slice(cursor));
       break;
     }
-    appendInlineText(fragment, value.slice(cursor, linkStart));
+
+    // `![[image.png]]` (Obsidian embed) and `![alt](image.png)` (CommonMark image) are
+    // images, not links. The leading `!` belongs to the embed, so keep it out of the text.
+    const isEmbed = linkStart > cursor && value[linkStart - 1] === "!";
+    appendInlineText(fragment, value.slice(cursor, isEmbed ? linkStart - 1 : linkStart));
+
+    if (isEmbed) {
+      const embedded = parseEmbeddedImage(value, linkStart, context);
+      if (embedded) {
+        fragment.appendChild(embedded.element);
+        cursor = embedded.end;
+        continue;
+      }
+      // Not a renderable image: keep the `!` and let the wikilink/link branch below handle it.
+      appendInlineText(fragment, "!");
+    }
 
     const wikilink = parseWikilink(value, linkStart);
     if (wikilink) {
@@ -4606,6 +4767,195 @@ function renderInlineMarkdownContent(text, context = {}) {
   }
 
   return fragment;
+}
+
+const EMBEDDABLE_IMAGE_EXTENSIONS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "svg",
+  "bmp",
+  "avif",
+  "ico",
+  "tif",
+  "tiff"
+]);
+
+function isImagePath(target) {
+  const value = String(target || "").trim();
+  if (!value) return false;
+  if (/^(https?:|data:|blob:)/i.test(value)) return true;
+  const withoutQuery = value.split(/[?#]/)[0];
+  const match = /\.([a-z0-9]+)$/i.exec(withoutQuery);
+  return Boolean(match && EMBEDDABLE_IMAGE_EXTENSIONS.has(match[1].toLowerCase()));
+}
+
+function stripLinkTitle(href) {
+  const value = String(href || "").trim();
+  if (value.startsWith("<") && value.endsWith(">")) {
+    return value.slice(1, -1).trim();
+  }
+  const titleMatch = /^(\S+)\s+["'(].*$/.exec(value);
+  return titleMatch ? titleMatch[1] : value;
+}
+
+/** Parses `path|300` (width) and `path|alias` (alt text) Obsidian embed syntax. */
+function parseEmbedTarget(inner) {
+  const raw = String(inner || "").trim();
+  if (!raw) return null;
+  const pipeIndex = raw.indexOf("|");
+  if (pipeIndex === -1) {
+    return { target: raw, width: null, alt: "" };
+  }
+  const target = raw.slice(0, pipeIndex).trim();
+  const alias = raw.slice(pipeIndex + 1).trim();
+  if (!target) return null;
+  if (/^\d+$/.test(alias)) {
+    return { target, width: Number(alias), alt: "" };
+  }
+  return { target, width: null, alt: alias };
+}
+
+/**
+ * Recognises `![[image.png]]` and `![alt](image.png)` starting at the `[` index.
+ * Returns `{ element, end }` when the token is a renderable image, else null.
+ */
+function parseEmbeddedImage(value, linkStart, context) {
+  if (value[linkStart] !== "[") {
+    return null;
+  }
+
+  if (value[linkStart + 1] === "[") {
+    const close = value.indexOf("]]", linkStart + 2);
+    if (close === -1) return null;
+    const parsed = parseEmbedTarget(value.slice(linkStart + 2, close));
+    // Obsidian also uses ![[note]] for transclusion, which is not an image.
+    if (!parsed || !isImagePath(parsed.target)) return null;
+    return {
+      element: createImageElement(parsed.target, parsed.alt, parsed.width, "embed", context),
+      end: close + 2
+    };
+  }
+
+  const labelEnd = value.indexOf("]", linkStart + 1);
+  if (labelEnd === -1 || value[labelEnd + 1] !== "(") {
+    return null;
+  }
+  const hrefEnd = findMarkdownLinkEnd(value, labelEnd + 2);
+  if (hrefEnd === -1) {
+    return null;
+  }
+
+  const alt = value.slice(linkStart + 1, labelEnd).trim();
+  const href = stripLinkTitle(value.slice(labelEnd + 2, hrefEnd));
+  const knownImage = Boolean(context?.imageContext?.images?.[href]);
+  if (!href || !(isImagePath(href) || knownImage)) {
+    return null;
+  }
+
+  return {
+    element: createImageElement(href, alt, null, "markdown", context),
+    end: hrefEnd + 1
+  };
+}
+
+function encodeRelativePath(relative) {
+  return String(relative || "")
+    .replace(/\\/g, "/")
+    .split("/")
+    .map((segment) => {
+      if (!segment) return segment;
+      try {
+        return encodeURIComponent(decodeURIComponent(segment));
+      } catch {
+        return encodeURIComponent(segment);
+      }
+    })
+    .join("/");
+}
+
+/**
+ * Builds the ordered list of URIs to try for an image. The extension resolves existing
+ * files up front; the remaining candidates are fallbacks for paths typed during editing.
+ */
+function buildImageCandidates(rawTarget, kind, context) {
+  const raw = String(rawTarget || "").trim();
+  if (!raw) return [];
+  if (/^(https?:|data:|blob:)/i.test(raw)) return [raw];
+
+  const imageContext = context?.imageContext || {};
+  const mapped = imageContext.images?.[raw];
+  if (mapped) return [mapped];
+  if (imageContext.missing?.has?.(raw)) return [];
+
+  const relative = encodeRelativePath(raw.replace(/^\.\//, ""));
+  const bases =
+    kind === "embed"
+      ? [imageContext.vaultBaseUri, imageContext.imageBaseUri]
+      : [imageContext.imageBaseUri, imageContext.vaultBaseUri];
+
+  const candidates = [];
+  for (const base of bases) {
+    if (base && !candidates.includes(`${base}${relative}`)) {
+      candidates.push(`${base}${relative}`);
+    }
+  }
+  return candidates;
+}
+
+function createImagePlaceholder(rawTarget, message) {
+  const box = document.createElement("span");
+  box.className = "md-image-placeholder";
+  const title = document.createElement("span");
+  title.className = "md-image-placeholder-title";
+  title.textContent = message;
+  const pathEl = document.createElement("span");
+  pathEl.className = "md-image-placeholder-path";
+  pathEl.textContent = rawTarget;
+  box.append(title, pathEl);
+  return box;
+}
+
+function createImageElement(rawTarget, alt, width, kind, context) {
+  const figure = document.createElement("span");
+  figure.className = "md-image";
+  figure.dataset.imageTarget = rawTarget;
+
+  const candidates = buildImageCandidates(rawTarget, kind, context);
+  if (!candidates.length) {
+    figure.classList.add("md-image--missing");
+    figure.appendChild(createImagePlaceholder(rawTarget, "找不到图片"));
+    return figure;
+  }
+
+  const img = document.createElement("img");
+  img.className = "md-image-el";
+  img.alt = alt || "";
+  img.loading = "lazy";
+  img.decoding = "async";
+  img.title = alt ? `${alt} — 点击放大` : `${rawTarget} — 点击放大`;
+  if (Number.isFinite(width) && width > 0) {
+    img.style.width = `${width}px`;
+    figure.dataset.imageWidth = String(width);
+  }
+
+  let candidateIndex = 0;
+  img.addEventListener("error", () => {
+    candidateIndex += 1;
+    if (candidateIndex < candidates.length) {
+      img.src = candidates[candidateIndex];
+      return;
+    }
+    figure.classList.add("md-image--missing");
+    figure.replaceChildren(createImagePlaceholder(rawTarget, "图片加载失败"));
+  });
+  img.addEventListener("click", () => openImageModal(img));
+  img.src = candidates[candidateIndex];
+
+  figure.appendChild(img);
+  return figure;
 }
 
 function findNextInlineLinkStart(value, start) {

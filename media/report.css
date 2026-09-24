@@ -892,6 +892,106 @@ p {
   align-items: flex-start;
   margin: var(--list-item-spacing) 0;
   line-height: var(--reader-line-height);
+  margin-left: calc(var(--md-indent-level, 0) * 1.6em);
+}
+
+/* Outline written with indentation instead of list markers (common in Obsidian notes). */
+.md-outline-block {
+  margin: var(--paragraph-spacing) 0;
+}
+
+.md-indent-line {
+  line-height: var(--reader-line-height);
+  margin: calc(var(--list-item-spacing) * 0.6) 0;
+  padding-left: calc(var(--md-indent-level, 0) * 1.6em);
+  position: relative;
+}
+
+/* A subtle guide rail per nesting level makes deep outlines easy to follow. */
+.md-indent-line[data-depth]:not([data-depth="0"])::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--md-indent-level, 0) * 1.6em - 0.8em);
+  top: 0.25em;
+  bottom: 0.25em;
+  width: 1px;
+  background: color-mix(in srgb, var(--line) 70%, transparent);
+}
+
+.md-highlight {
+  background: color-mix(in srgb, #f2c744 45%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 0.15em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+/* Embedded images: ![[image.png]] and ![alt](image.png). */
+.md-image {
+  display: inline-block;
+  max-width: 100%;
+  margin: 6px 0;
+  vertical-align: top;
+}
+
+.md-image-el {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper-strong);
+  cursor: zoom-in;
+}
+
+.md-image-el:hover {
+  border-color: var(--blue);
+}
+
+.md-image--missing {
+  display: block;
+  margin: 8px 0;
+}
+
+.md-image-placeholder {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 100%;
+  padding: 8px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--muted) 8%, transparent);
+}
+
+.md-image-placeholder-title {
+  color: var(--muted);
+  font-size: 0.88em;
+}
+
+.md-image-placeholder-path {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.8em;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+/* Image shown inside the shared fullscreen viewer. */
+.mermaid-modal.is-image .mermaid-modal-content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.media-modal-image {
+  display: block;
+  max-width: 88vw;
+  max-height: 86vh;
+  width: auto;
+  height: auto;
+  border-radius: 8px;
+  box-shadow: var(--shadow);
 }
 
 .list-marker {
