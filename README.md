@@ -46,9 +46,11 @@
 - **批注**：选中正文后添加批注；AI 修改正文后，与批注相关的所有改动都会直接在正文中高亮，批注卡片会区分用户问题和 AI 回复；解决后的批注继续留在 Markdown 文末，并可从右下角“已解决批注”按钮查看
 - **链接**：`http` / `https` / `mailto` 走系统浏览器；相对 `.md` 在编辑器内打开；`#anchor` 在 webview 内跳转；危险协议（如 `javascript:`）会被拦截
 
-#### 实时预览编辑（0.0.11）
+#### 普通渲染与实时编辑（0.0.12）
 
-正文默认可以编辑，无需切换编辑模式。标题、粗体、斜体、删除线、行内代码和链接在光标离开后隐藏 Markdown 标记；光标或选区进入时显示标记，并保留对应样式。未闭合的语法保留原文。
+每次打开默认使用普通渲染，支持 Obsidian 图片、指定宽度与点击全屏查看。点击右下角设置按钮上方的书本按钮切换到实时编辑，再点铅笔按钮返回普通渲染；悬停提示当前模式。切换不保存或重写文件，未同步输入会先完成同步，外部修改会更新当前视图。
+
+实时编辑中，标题、粗体、斜体、删除线、行内代码和链接在光标离开后隐藏 Markdown 标记；光标或选区进入时显示标记，并保留对应样式。未闭合的语法保留原文。
 
 - 输入立即同步 VS Code 文档；**Ctrl+S** 或已有自动保存设置负责落盘。正文和表格输入不主动保存。批注、高亮仍在显式保存时写入磁盘。
 - **Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y** 使用 VS Code 文档撤销历史；**Ctrl+B / Ctrl+I** 为选文切换粗体和斜体。
@@ -241,7 +243,7 @@ To auto-switch every `.md` file to the reader on left-click:
 - **Single-file rendering**: Only the opened `.md` is rendered; sibling Markdown files in the same folder are not scanned or merged
 - **TOC**: Collapsible sub-headings; scroll-sync highlight; resize, collapse, or switch sides with the layout persisted locally
 - **Annotations**: Select body text to add one; navigate unresolved items, highlight the AI-updated passage, and keep resolved history inside the current Markdown
-- **Editing**: Type directly in the CodeMirror live preview. Tables stay editable grids. Ctrl+S and existing auto-save settings write to disk; undo/redo uses VS Code history. Ctrl/Cmd+click opens ordinary links.
+- **Rendering modes**: Documents open in read mode by default. Use the button above Settings to switch to the CodeMirror live editor and back. Switching preserves unsaved changes. In live mode, tables stay editable grids; Ctrl+S and auto-save write to disk, and undo/redo uses VS Code history.
 - **Links**: `http` / `https` / `mailto` open in the system browser; relative `.md` opens in the editor; `#anchor` jumps inside the webview; dangerous schemes (e.g. `javascript:`) are blocked
 
 ### FAQ

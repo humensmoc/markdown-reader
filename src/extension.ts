@@ -3,11 +3,12 @@ import * as vscode from "vscode";
 import { updateReadingHighlight, type HighlightMessage } from "./readingHighlights";
 import { LiveDocument, type LiveMessage } from "./liveDocument";
 import { normalizeText } from "./textChanges";
-import { locateImage, resolveVaultRoot } from "./reportData";
+import { buildReportPayload, locateImage, resolveVaultRoot } from "./reportData";
 
 type ViewerMessage =
   | LiveMessage
   | { type: "resolveImage"; href: string }
+  | { type: "requestReadPreview"; requestId: number }
   | HighlightMessage
   | { type: "ready" }
   | { type: "requestReaderSettings" }
@@ -780,6 +781,21 @@ export class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProv
         await live.coordinator.receive(message as LiveMessage, postToWebview);
         return;
       }
+      if (message.type === "requestReadPreview") {
+        await live.coordinator.run(async () => {
+          try {
+            const snapshot = live.coordinator.snapshot();
+            const payload = await buildReportPayload(document.uri, snapshot.content, {
+              vaultRoot: vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath,
+              toWebviewUri: file => webviewPanel.webview.asWebviewUri(vscode.Uri.file(file)).toString()
+            });
+            await postToWebview({ type: "readPreview", requestId: message.requestId, version: snapshot.version, payload });
+          } catch (error) {
+            await postToWebview({ type: "readPreviewError", requestId: message.requestId, message: String(error) });
+          }
+        });
+        return;
+      }
       if (message.type === "resolveImage") {
         const href = String(message.href || "");
         if (!/^[a-zA-Z][\w+.-]*:/.test(href)) {
@@ -1412,6 +1428,10 @@ export class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProv
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 7.75 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35Z"/></svg>
     </button>
     <div class="reader-settings-root">
+      <button id="renderModeToggle" type="button" class="reader-tool-button render-mode-toggle" title="当前：普通渲染；点击切换到实时编辑" aria-label="切换到实时编辑" aria-pressed="false">
+        <svg class="render-mode-read-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h7a3 3 0 0 1 2 1 3 3 0 0 1 2-1h7v16h-7a2 2 0 0 0-2 1 2 2 0 0 0-2-1H3V4Zm2 2v12h5l1 .2V7a1 1 0 0 0-1-1H5Zm8 1v11.2l1-.2h5V6h-5a1 1 0 0 0-1 1Z"/></svg>
+        <svg class="render-mode-edit-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5-12 12H4v-5L16 3ZM6 16v2h2L18 8l-2-2L6 16Z"/></svg>
+      </button>
       <button id="readerSettingsToggle" type="button" class="reader-settings-toggle" aria-expanded="false" aria-controls="readerSettingsPanel" title="阅读设置">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm8.94 4.88a8.96 8.96 0 0 0 .06-1.76l2.03-1.58a.75.75 0 0 0 .18-.96l-1.92-3.32a.75.75 0 0 0-.9-.33l-2.39.96a9.06 9.06 0 0 0-1.52-.88l-.36-2.54A.75.75 0 0 0 14.9 2h-3.8a.75.75 0 0 0-.74.65l-.36 2.54c-.54.22-1.05.5-1.52.88l-2.39-.96a.75.75 0 0 0-.9.33L2.27 8.96a.75.75 0 0 0 .18.96l2.03 1.58c-.04.29-.06.58-.06.88s.02.59.06.88L2.45 14.9a.75.75 0 0 0-.18.96l1.92 3.32c.18.31.57.45.9.33l2.39-.96c.47.38.98.66 1.52.88l.36 2.54c.08.57.62 1 1.19 1h3.8c.57 0 1.11-.43 1.19-1l.36-2.54c.54-.22 1.05-.5 1.52-.88l2.39.96c.33.12.72-.02.9-.33l1.92-3.32a.75.75 0 0 0-.18-.96l-2.03-1.58Z"/></svg>
       </button>

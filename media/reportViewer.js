@@ -1,7 +1,7 @@
 const hostVscode = typeof acquireVsCodeApi === "function" ? acquireVsCodeApi() : null;
 const liveBusiness = new Set(["addAnnotation", "updateAnnotation", "resolveAnnotation", "deleteAnnotation", "normalizeAnnotations", "saveReadingHighlight", "deleteReadingHighlight"]);
 const vscode = { postMessage(message) {
-  if (window.LivePreview && liveBusiness.has(message.type)) window.LivePreview.send(message);
+  if (window.ReaderController && liveBusiness.has(message.type)) window.ReaderController.send(message);
   else hostVscode?.postMessage(message);
 } };
 
@@ -1502,6 +1502,7 @@ function wrapContentInSections(container) {
 
 function isBlockDragEnabled() {
   return (
+    (!window.ReaderController || Boolean(window.LivePreview)) &&
     Boolean(readerSettings.enableBlockDrag) &&
     !document.body.classList.contains("editor-mode") &&
     !document.body.classList.contains("wysiwyg-mode")
@@ -1509,6 +1510,11 @@ function isBlockDragEnabled() {
 }
 
 function applyBlockDragSetting() {
+  if (window.ReaderController && !window.LivePreview) {
+    document.documentElement.classList.remove("block-drag-enabled");
+    document.querySelectorAll(".md-drag-handle").forEach(node => node.remove());
+    return;
+  }
   if (window.LivePreview) { window.LivePreview.redecorate(); return; }
   document.documentElement.classList.toggle("block-drag-enabled", Boolean(readerSettings.enableBlockDrag));
   document.querySelectorAll(".md-drag-handle").forEach((node) => node.remove());
@@ -1836,7 +1842,7 @@ function renderReport(payload) {
   toc.appendChild(tocInner);
   renderAnnotationDock();
   window.ReaderHighlights?.render(preprocessMarkdownContent(latestDocumentText).readingHighlights, latestDocumentText);
-  requestAnnotationNormalization();
+  if (!window.ReaderController) requestAnnotationNormalization();
   updateActiveToc();
   void hydrateMermaid(reportContent);
   applyBlockDragSetting();
@@ -3335,7 +3341,7 @@ function renderTaskListItem(checked, bodyText, context, lineIndex = -1) {
   checkbox.checked = checked;
   checkbox.className = "task-checkbox";
   checkbox.setAttribute("aria-label", checked ? "标记为未完成" : "标记为已完成");
-  if (lineIndex >= 0 && vscode) {
+  if (lineIndex >= 0 && vscode && !window.ReaderController) {
     checkbox.addEventListener("change", () => {
       handleTaskCheckboxToggle(lineIndex, checkbox.checked, item, checkbox);
     });
@@ -3426,7 +3432,7 @@ function appendTableCellContent(parent, cellText, context, lineIndex, cellIndex)
   checkbox.checked = task.checked;
   checkbox.className = "task-checkbox";
   checkbox.setAttribute("aria-label", task.checked ? "标记为未完成" : "标记为已完成");
-  if (lineIndex >= 0 && vscode) {
+  if (lineIndex >= 0 && vscode && !window.ReaderController) {
     checkbox.addEventListener("change", () => {
       handleTableCellTaskToggle(lineIndex, cellIndex, checkbox.checked, checkbox, wrapper);
     });
@@ -5390,6 +5396,8 @@ function makeFallbackAnchor(fileName, index, text) {
 
 // The retained reader services only derive UI from source. CodeMirror owns every body edit.
 window.ReaderServices = {
+  render: renderReport,
+  resetView: () => { closeMermaidModal(); closeAnnotationDialog(); hideCiteHoverPopover(); clearActiveInternalJump(); },
   post: message => hostVscode?.postMessage(message),
   settings: () => readerSettings,
   compactToc: () => setTocCollapsed(true, { persist: false }),

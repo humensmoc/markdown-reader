@@ -9,6 +9,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const Module = require("node:module");
 const path = require("node:path");
+const os = require("node:os");
 
 /* ------------------------------------------------------------- vscode stub */
 
@@ -50,11 +51,11 @@ assert.deepEqual(
 );
 console.log("ok - collectImageTargets finds embeds/images and skips code spans and fences");
 
-const documentDir = "/tmp/vault/notes/sub";
-const vaultRoot = "/tmp/vault";
+const vaultRoot = path.resolve(os.tmpdir(), "markdown-reader-image-resolution-fixture");
+const documentDir = path.join(vaultRoot, "notes", "sub");
 const fakeExists = new Set([
-  "/tmp/vault/notes/sub/local.png",
-  "/tmp/vault/attachments/shot.png"
+  path.join(documentDir, "local.png"),
+  path.join(vaultRoot, "attachments", "shot.png")
 ]);
 const toWebviewUri = (fsPath) => `https://webview.example/${fsPath}`;
 const originalStatSync = fs.statSync;
@@ -71,15 +72,15 @@ try {
     toWebviewUri
   );
   // Vault-relative Obsidian embed.
-  assert.equal(result.resolved["attachments/shot.png"], "https://webview.example//tmp/vault/attachments/shot.png");
+  assert.equal(result.resolved["attachments/shot.png"], toWebviewUri(path.join(vaultRoot, "attachments", "shot.png")));
   // Document-relative Markdown image.
-  assert.equal(result.resolved["local.png"], "https://webview.example//tmp/vault/notes/sub/local.png");
+  assert.equal(result.resolved["local.png"], toWebviewUri(path.join(documentDir, "local.png")));
   // Unresolvable paths are reported so the renderer can show a placeholder.
   assert.deepEqual(result.missing, ["attachments/nope.png"]);
   console.log("ok - vault-relative embeds and document-relative images both resolve");
 
   fs.statSync = originalStatSync;
-  assert.equal(resolveVaultRoot("/tmp/vault/notes/sub", undefined), "/tmp/vault/notes/sub");
+  assert.equal(resolveVaultRoot(documentDir, undefined), documentDir);
 } finally {
   fs.statSync = originalStatSync;
 }

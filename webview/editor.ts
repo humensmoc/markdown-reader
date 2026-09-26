@@ -8,7 +8,7 @@ import { extractMarkdownHeadings } from "../src/markdownHeadings";
 import { diffText, type TextChange } from "../src/textChanges";
 import { DocumentBridge } from "./documentBridge";
 
-declare global { interface Window { ReaderServices: any; ReaderMath: any; ReaderHighlightFormat: any; ReaderHighlights: any; LivePreview: LiveEditor; } }
+declare global { interface Window { ReaderServices: any; ReaderMath: any; ReaderHighlightFormat: any; ReaderHighlights: any; LivePreview?: LiveEditor; ReaderController: LiveEditor; } }
 const S = window.ReaderServices;
 const refresh = StateEffect.define<null>();
 const remote = StateEffect.define<null>();
@@ -157,18 +157,33 @@ export class LiveEditor {
   private returnHighlightTimer = 0;
   private replacingRemote = false;
   private updatingCell = false;
+  editing = false;
+  private switchAfterSync = false;
+  private previewRequest = 0;
+  private previewVersion = -1;
+  private savedSelection: number | undefined;
+  private scrollFraction: number | undefined;
 
   constructor() {
     this.statusNode = document.createElement("span"); this.statusNode.className = "lp-status"; this.statusNode.setAttribute("role", "status");
     this.conflictNode = document.createElement("div"); this.conflictNode.className = "lp-conflict"; this.conflictNode.hidden = true;
     document.body.append(this.statusNode, this.conflictNode);
     this.bridge = new DocumentBridge(m => S.post(m), (text, reset) => this.setText(text, reset), () => this.updateStatus());
-    document.body.classList.add("live-preview");
+    document.body.dataset.renderMode = "read";
     window.addEventListener("message", e => {
       if (this.bridge.receive(e.data)) return;
+      if (e.data.type === "readPreview") { this.showReadPreview(e.data); return; }
+      if (e.data.type === "readPreviewError" && !this.editing && e.data.requestId === this.previewRequest) {
+        this.previewVersion = -1;
+        const message = document.createElement("p"); message.className = "read-preview-message";
+        message.textContent = "普通渲染加载失败，请点击重新加载文档重试。";
+        document.getElementById("reportContent")!.replaceChildren(message);
+      }
       if (e.data.type === "resolvedImage") { this.imageUrls.set(e.data.href, e.data.url); this.redecorate(); }
       if (e.data.type === "toggleSource") this.toggleSource();
     });
+    document.getElementById("renderModeToggle")?.addEventListener("click", () => this.setEditing(!this.editing));
+    this.updateModeButton();
     document.getElementById("showMarkdownSource")?.addEventListener("change", () => this.toggleSource());
     document.getElementById("reloadDocumentBtn")?.addEventListener("click", e => { e.stopImmediatePropagation(); this.reload(); }, true);
     document.addEventListener("selectionchange", () => {
@@ -216,13 +231,78 @@ export class LiveEditor {
       reload.onclick = () => { if (confirm("确认放弃尚未同步的本地输入？建议先查看差异保留草稿。")) S.post({ type: "reloadLiveDocument" }); };
       this.conflictNode.append(label, compare, reload);
     }
+    if (this.switchAfterSync && !this.bridge.pending && !this.bridge.conflict) {
+      this.switchAfterSync = false; this.setEditing(false);
+    }
+    if (this.bridge.conflict) this.switchAfterSync = false;
+    this.updateModeButton();
+    this.requestReadPreview();
+  }
+  private updateModeButton() {
+    const button = document.getElementById("renderModeToggle") as HTMLButtonElement;
+    if (button) {
+      button.disabled = !this.bridge?.uri || this.switchAfterSync || (this.editing && Boolean(this.bridge.conflict));
+      button.setAttribute("aria-pressed", String(this.editing));
+      button.setAttribute("aria-label", this.editing ? "切换到普通渲染" : "切换到实时编辑");
+      button.title = this.bridge.conflict ? "请先处理同步冲突，再切换模式" : this.switchAfterSync ? "正在同步，完成后切换到普通渲染" : this.editing ? "当前：实时编辑；点击切换到普通渲染" : "当前：普通渲染；点击切换到实时编辑";
+    }
+    const source = document.getElementById("showMarkdownSource") as HTMLInputElement;
+    if (source) { source.disabled = !this.editing; source.checked = this.editing && this.sourceMode; }
+  }
+  setEditing(editing: boolean) {
+    if (editing === this.editing || !this.bridge.uri) return;
+    if (!editing && this.bridge.conflict) { this.updateStatus(); return; }
+    if (!editing && this.bridge.pending) { this.switchAfterSync = true; this.updateModeButton(); return; }
+    this.closeCell();
+    this.scrollFraction = scrollY / Math.max(1, document.documentElement.scrollHeight - innerHeight);
+    this.editing = editing;
+    window.LivePreview = editing ? this : undefined;
+    document.body.classList.toggle("live-preview", editing);
+    document.body.dataset.renderMode = editing ? "live" : "read";
+    const mount = document.getElementById("reportContent")!;
+    mount.classList.toggle("markdown-body", editing);
+    clearTimeout(this.asideTimer); clearTimeout(this.returnHighlightTimer);
+    document.getElementById("lpReturn")?.remove();
+    S.resetView();
+    if (this.view) {
+      this.savedSelection = this.view.state.selection.main.head;
+      this.view.destroy(); this.view = undefined!;
+    }
+    mount.replaceChildren();
+    this.previewRequest++; this.previewVersion = -1;
+    this.updateModeButton();
+    if (editing) {
+      this.cache = "\0";
+      this.setText(this.bridge.text, false);
+      if (this.savedSelection !== undefined) this.view.dispatch({ selection: { anchor: Math.min(this.savedSelection, this.view.state.doc.length) } });
+      this.restoreScroll();
+    } else this.requestReadPreview();
+  }
+  private restoreScroll() {
+    if (this.scrollFraction === undefined) return;
+    const fraction = this.scrollFraction; this.scrollFraction = undefined;
+    requestAnimationFrame(() => scrollTo(0, fraction * Math.max(0, document.documentElement.scrollHeight - innerHeight)));
+  }
+  private requestReadPreview() {
+    if (this.editing || !this.bridge.uri || this.bridge.pending || this.bridge.conflict || this.previewVersion === this.bridge.version) return;
+    this.previewVersion = this.bridge.version;
+    S.post({ type: "requestReadPreview", requestId: ++this.previewRequest });
+  }
+  private showReadPreview(message: any) {
+    if (this.editing || message.requestId !== this.previewRequest || message.version !== this.bridge.version || this.bridge.pending || this.bridge.conflict) return;
+    if (message.payload?.rootUri !== this.bridge.uri || message.payload?.files?.[0]?.content !== this.bridge.text) return;
+    S.setText(this.bridge.text);
+    S.render(message.payload);
+    this.restoreScroll();
   }
   send(message: any) {
     if (["openFile", "openExternal", "resolveImage"].includes(message.type)) S.post(message);
     else this.bridge.command({ ...message, livePreview: true });
   }
-  reload() { if (!this.bridge.pending && !this.bridge.conflict) S.post({ type: "reloadLiveDocument" }); else this.updateStatus(); }
+  reload() { if (!this.bridge.pending && !this.bridge.conflict) { this.previewVersion = -1; S.post({ type: "reloadLiveDocument" }); } else this.updateStatus(); }
   toggleSource() {
+    if (!this.editing) this.setEditing(true);
+    if (!this.editing) return;
     this.sourceMode = !this.sourceMode; this.closeCell(); this.redecorate();
     const box = document.getElementById("showMarkdownSource") as HTMLInputElement; if (box) box.checked = this.sourceMode;
   }
@@ -231,6 +311,7 @@ export class LiveEditor {
 
   private setText(text: string, reset: boolean) {
     S.setText(text);
+    if (!this.editing) { if (reset) this.previewVersion = -1; this.requestReadPreview(); return; }
     if (!this.view) {
       const mount = document.getElementById("reportContent")!; mount.classList.add("markdown-body");
       const pre = S.preprocess(text), firstBody = pre.frontmatter ? Math.min(pre.frontmatter.length + 1, text.length) : 0;
@@ -581,6 +662,7 @@ export class LiveEditor {
     }
   }
   private handleClick(event: MouseEvent) {
+    if (!this.editing) return;
     const target = event.target as Element;
     const wiki = target.closest(".lp-wiki") as HTMLElement;
     if (wiki && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.stopImmediatePropagation(); this.openLink(wiki.dataset.href!); return; }
@@ -774,13 +856,13 @@ export class LiveEditor {
     return this.view.state.doc.line(Math.max(1, Math.min((annotation.targetLine || 0) + 1, this.view.state.doc.lines))).from;
   }
   private updateAsides() {
-    if (!this.view) return;
+    if (!this.editing || !this.view) return;
     this.analyze(this.view.state);
     S.asides(this.view.state.doc.toString(), this.headings, this.annotations, this.parsed);
     this.scrollSpy();
   }
   scrollSpy() {
-    if (!this.view) return;
+    if (!this.editing || !this.view) return;
     const pos = this.view.posAtCoords({ x: this.view.contentDOM.getBoundingClientRect().left + 10, y: Math.max(20, this.view.dom.getBoundingClientRect().top + 5) }, false) || 0;
     const line = this.view.state.doc.lineAt(Math.min(pos, this.view.state.doc.length)).number;
     const h = this.headings.filter(h => h.line <= line).at(-1) || this.headings[0];
@@ -804,5 +886,5 @@ export class LiveEditor {
   }
 }
 
-window.LivePreview = new LiveEditor();
+window.ReaderController = new LiveEditor();
 S.post({ type: "ready" });

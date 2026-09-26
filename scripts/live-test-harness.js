@@ -3,7 +3,7 @@ const path = require('node:path');
 const http = require('node:http');
 const { chromium } = require('@playwright/test');
 const root = path.resolve(__dirname, '..');
-exports.start = async function () {
+exports.start = async function (options = {}) {
   const source = fs.readFileSync(path.join(root, 'src/extension.ts'), 'utf8');
   const values = { nonce: 'live-test', 'webview.cspSource': "'self'", cssUri: '/media/report.css', liveCssUri: '/media/livePreview.css',
     jsUri: '/media/reportViewer.js', mermaidUri: '/media/mermaid.min.js', katexUri: '/media/katex/katex.min.js', katexCssUri: '/media/katex/katex.min.css',
@@ -23,16 +23,19 @@ exports.start = async function () {
   page.setDefaultTimeout(8000);
   let text = '', version = 0, undo = [], redo = [];
   const { applyChanges, fromWire, toWire, diffText } = require('../out/textChanges');
+  const { buildReportPayload } = require('../out/reportData');
+  const documentUri = options.documentUri || 'file:///live-test.md';
   async function message(m) { await page.evaluate(m => window.postMessage(m, '*'), m); }
   async function change(next, origin = {}) {
     const old = text, baseVersion = version; text = next; version++;
-    await message({ type: 'documentPatch', documentUri: 'file:///live-test.md', baseVersion, version, changes: toWire(old, diffText(old, next)), dirty: true, ...origin });
+    await message({ type: 'documentPatch', documentUri, baseVersion, version, changes: toWire(old, diffText(old, next)), dirty: true, ...origin });
   }
   const { updateReadingHighlight } = require('../out/readingHighlights');
   await page.exposeFunction('hostPost', async m => {
     sent.push(m);
     try {
       if (m.type === 'applyEdits') {
+        if (options.editDelay) await new Promise(r => setTimeout(r, options.editDelay));
         if (m.baseVersion !== version) throw Error('stale test operation');
         const next = applyChanges(text, fromWire(text, m.changes)); undo.push(text); redo = [];
         await change(next, { clientId: m.clientId, operationId: m.operationId });
@@ -43,6 +46,12 @@ exports.start = async function () {
         if (m.command === 'save') await message({ type: 'documentSaved', dirty: false });
       } else if (m.type === 'saveReadingHighlight' || m.type === 'deleteReadingHighlight') {
         undo.push(text); await change(updateReadingHighlight(text, m)); await message({ type: 'readingHighlightSaved' });
+      } else if (m.type === 'requestReadPreview') {
+        const fsPath = options.documentPath || path.join(root, 'docs/fixtures/live-test.md');
+        const payload = await buildReportPayload({ fsPath, toString: () => documentUri }, text, { toWebviewUri: options.toWebviewUri });
+        await message({ type: 'readPreview', requestId: m.requestId, version, payload });
+      } else if (m.type === 'reloadLiveDocument') {
+        await message({ type: 'documentInit', documentUri, content: text, version, dirty: false });
       }
     } catch (e) { errors.push('HOST: ' + e.message); }
   });
@@ -51,9 +60,16 @@ exports.start = async function () {
   await page.addInitScript(() => { window.acquireVsCodeApi = () => ({ postMessage: m => window.hostPost(m), getState: () => ({}), setState: () => {} }); });
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
   await page.addStyleTag({ content: ':root { --vscode-editor-background:#faf9f6; --vscode-editor-foreground:#292929; --vscode-sideBar-background:#eeedea; --vscode-descriptionForeground:#777; --vscode-panel-border:#ddd; --vscode-font-family:"Segoe UI",sans-serif; --vscode-font-size:14px; }' });
-  return { page, errors, sent, text: () => text, change,
-    async load(content) { text = content; version++; undo = []; redo = []; await message({ type: 'documentInit', documentUri: 'file:///live-test.md', content, version, dirty: false }); await page.waitForFunction(t => window.LivePreview?.view?.state.doc.toString() === t, content); },
-    async idle() { await page.waitForFunction(() => !window.LivePreview.bridge.pending); },
+  return { page, errors, sent, text: () => text, change, message,
+    async load(content) {
+      text = content; version++; undo = []; redo = [];
+      await message({ type: 'documentInit', documentUri, content, version, dirty: false });
+      await page.waitForFunction(t => window.ReaderController?.bridge.text === t, content);
+      if (options.mode !== 'read' && !await page.evaluate(() => window.ReaderController.editing)) await page.locator('#renderModeToggle').click();
+      if (options.mode !== 'read') await page.waitForFunction(t => window.LivePreview?.view?.state.doc.toString() === t, content);
+      else await page.waitForSelector('.report-file');
+    },
+    async idle() { await page.waitForFunction(() => !window.ReaderController.bridge.pending); },
     async close() { await browser.close(); await new Promise(r => server.close(r)); }
   };
 };

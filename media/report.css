@@ -1569,9 +1569,21 @@ body.mermaid-modal-open {
   position: relative;
 }
 
+.render-mode-toggle { position: absolute; right: 0; bottom: 48px; }
+.render-mode-toggle .render-mode-edit-icon,
+.render-mode-toggle[aria-pressed="true"] .render-mode-read-icon { display: none; }
+.render-mode-toggle[aria-pressed="true"] .render-mode-edit-icon { display: block; }
+.render-mode-toggle[aria-pressed="true"] { color: var(--blue); border-color: var(--blue); }
+.reader-tool-button:disabled { opacity: .5; cursor: not-allowed; }
+.reader-tool-button:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+.read-preview-message { padding: 32px 16px; color: var(--muted); }
+@media (max-width: 650px) {
+  body[data-render-mode="read"] .report-content { padding-top: 56px; }
+}
+
 .editor-mode-root {
   position: fixed;
-  right: 18px;
+  right: 68px;
   bottom: 68px;
   z-index: 30;
   display: inline-flex;
