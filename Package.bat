@@ -24,47 +24,24 @@ del .vsix-name.tmp
 
 if not exist "%VSIX%" goto missing_vsix
 
-set "CURSOR="
-if exist "%LOCALAPPDATA%\Programs\cursor\resources\app\bin\cursor.cmd" set "CURSOR=%LOCALAPPDATA%\Programs\cursor\resources\app\bin\cursor.cmd"
-if defined CURSOR goto find_vscode
-where cursor >nul 2>&1
-if not errorlevel 1 for /f "delims=" %%I in ('where cursor 2^>nul') do if not defined CURSOR set "CURSOR=%%I"
-
-:find_vscode
 set "VSCODE="
 if exist "%LOCALAPPDATA%\Programs\Microsoft VS Code\bin\code.cmd" set "VSCODE=%LOCALAPPDATA%\Programs\Microsoft VS Code\bin\code.cmd"
-if defined VSCODE goto check_editors
+if defined VSCODE goto install_vscode
 if exist "%ProgramFiles%\Microsoft VS Code\bin\code.cmd" set "VSCODE=%ProgramFiles%\Microsoft VS Code\bin\code.cmd"
-if defined VSCODE goto check_editors
+if defined VSCODE goto install_vscode
 where code >nul 2>&1
 if not errorlevel 1 for /f "delims=" %%I in ('where code 2^>nul') do if not defined VSCODE set "VSCODE=%%I"
 
-:check_editors
-if defined CURSOR goto install_cursor
-if defined VSCODE goto skip_cursor
-echo [ERROR] Cursor CLI and VS Code CLI were not found.
-echo Add the cursor or code command to PATH, then run this script again.
+if defined VSCODE goto install_vscode
+echo [ERROR] VS Code CLI was not found.
+echo Add the code command to PATH, then run this script again.
 pause
 exit /b 1
 
-:install_cursor
-echo [INFO] Installing %VSIX% into Cursor...
-call "%CURSOR%" --install-extension "%CD%\%VSIX%" --force
-if errorlevel 1 goto cursor_install_failed
-
-:skip_cursor
-if defined CURSOR goto install_vscode
-echo [WARN] Cursor CLI not found. Skipping Cursor installation.
-
 :install_vscode
-if not defined VSCODE goto skip_vscode
 echo [INFO] Installing %VSIX% into VS Code...
 call "%VSCODE%" --install-extension "%CD%\%VSIX%" --force
 if errorlevel 1 goto vscode_install_failed
-goto success
-
-:skip_vscode
-echo [WARN] VS Code CLI not found. Skipping VS Code installation.
 goto success
 
 :missing_node
@@ -92,11 +69,6 @@ echo [ERROR] VSIX file not found: %VSIX%
 pause
 exit /b 1
 
-:cursor_install_failed
-echo [ERROR] Cursor extension installation failed.
-pause
-exit /b 1
-
 :vscode_install_failed
 echo [ERROR] VS Code extension installation failed.
 pause
@@ -105,6 +77,6 @@ exit /b 1
 :success
 echo.
 echo [OK] Package and editor installation completed: %VSIX%
-echo Run Developer: Reload Window in Cursor and VS Code.
+echo Run Developer: Reload Window in VS Code.
 pause
 endlocal
