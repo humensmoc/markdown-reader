@@ -20,6 +20,18 @@ async function main() {
   try {
     await h.load(source); await read();
     assert.equal(await page.locator('.cm-editor').count(), 0, 'ordinary rendering is the default');
+    await page.evaluate(() => {
+      window.hostLinkClicks = 0;
+      window.addEventListener('click', event => {
+        if (event.target.closest('a[href]')) window.hostLinkClicks++;
+      });
+    });
+    const sentBeforeLink = h.sent.length;
+    await page.getByRole('link', { name: '网站' }).click();
+    assert.deepEqual(h.sent.slice(sentBeforeLink).filter(message => message.type === 'openExternal'),
+      [{ type: 'openExternal', href: 'https://example.com' }]);
+    assert.equal(await page.evaluate(() => window.hostLinkClicks), 0,
+      'handled links must not bubble to the VS Code webview link opener');
     assert.equal(await page.locator('#renderModeToggle').getAttribute('aria-pressed'), 'false');
     await page.waitForFunction(() => [...document.querySelectorAll('.md-image-el')].every(i => i.naturalWidth > 0));
     assert.equal(await page.locator('.md-image-el').count(), 2);

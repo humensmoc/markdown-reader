@@ -38,6 +38,7 @@ let activeReaderWebview: vscode.Webview | undefined;
 const textModeUris = new Set<string>();
 const readerIntentUris = new Set<string>();
 const openInReaderModeInflight = new Map<string, Promise<void>>();
+const revertToTextInflight = new Set<string>();
 const extensionActivatedAt = Date.now();
 const STARTUP_GRACE_MS = 1200;
 
@@ -240,6 +241,10 @@ function findTextTabsForUri(uri: vscode.Uri): vscode.Tab[] {
     }
   }
   return tabs;
+}
+
+function isTabOpen(tab: vscode.Tab): boolean {
+  return vscode.window.tabGroups.all.some((group) => group.tabs.includes(tab));
 }
 
 async function closeDuplicateTextTab(uri: vscode.Uri): Promise<void> {
@@ -534,25 +539,32 @@ async function shouldSuppressReaderModeAsync(uri: vscode.Uri, tab?: vscode.Tab):
   return false;
 }
 
-async function revertToTextOrGitDiff(uri: vscode.Uri, tab?: vscode.Tab): Promise<void> {
-  textModeUris.add(uri.toString());
-
-  if (tab) {
-    try {
-      await vscode.window.tabGroups.close(tab);
-    } catch {
-      // Ignore close failures.
-    }
-  }
-
-  try {
-    await vscode.commands.executeCommand("git.openChange", uri);
+async function revertToTextEditor(uri: vscode.Uri, tab?: vscode.Tab): Promise<void> {
+  const key = uri.toString();
+  textModeUris.add(key);
+  if (revertToTextInflight.has(key)) {
     return;
-  } catch {
-    // Fall back to plain text editor when git command is unavailable.
   }
+  revertToTextInflight.add(key);
+  try {
+    const readerTab = tab && isTabOpen(tab) ? tab : findReaderTab(uri);
+    if (!readerTab && (findTextTabsForUri(uri).length > 0 || isUriInDiffEditor(uri))) {
+      return;
+    }
+    if (readerTab) {
+      try {
+        await vscode.window.tabGroups.close(readerTab);
+      } catch {
+        // The tab may have closed before this fallback runs.
+      }
+    }
 
-  await vscode.commands.executeCommand("vscode.openWith", uri, "default");
+    // git.openChange can reopen an untracked .md with its associated custom editor.
+    // Request the built-in text editor explicitly so the fallback cannot reopen Reader.
+    await vscode.commands.executeCommand("vscode.openWith", uri, "default");
+  } finally {
+    revertToTextInflight.delete(key);
+  }
 }
 
 async function handleReaderTabOpened(uri: vscode.Uri, tab: vscode.Tab): Promise<void> {
@@ -560,7 +572,7 @@ async function handleReaderTabOpened(uri: vscode.Uri, tab: vscode.Tab): Promise<
     return;
   }
   if (await shouldSuppressReaderModeAsync(uri, tab)) {
-    await revertToTextOrGitDiff(uri, tab);
+    await revertToTextEditor(uri, tab);
   }
 }
 
@@ -582,7 +594,7 @@ async function reconcileRestoredReaderTabs(): Promise<void> {
         continue;
       }
       if (await shouldSuppressReaderModeAsync(uri, tab)) {
-        await revertToTextOrGitDiff(uri, tab);
+        await revertToTextEditor(uri, tab);
       }
     }
   }
@@ -741,7 +753,7 @@ export class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProv
       if (await shouldSuppressReaderModeAsync(uri, tab)) {
         textModeUris.add(uri.toString());
         setTimeout(() => {
-          void revertToTextOrGitDiff(uri, tab);
+          void revertToTextEditor(uri, tab);
         }, 0);
         return;
       }

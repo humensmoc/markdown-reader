@@ -5199,6 +5199,10 @@ function handleReportClick(evt) {
     return;
   }
 
+  // VS Code's webview host also opens anchor clicks at the window level.
+  // Keep handled links from reaching that listener after we open them here.
+  evt.stopPropagation();
+
   const anchorId = link.dataset.anchor || "";
   const href = String(link.getAttribute("href") || "");
 

@@ -332,7 +332,7 @@ sequenceDiagram
 flowchart TD
   OPEN[".md 标签页打开"] --> CHECK{"shouldSuppressReaderMode?"}
 
-  CHECK -->|是| REVERT["revertToTextOrGitDiff<br/>git.openChange 或 default 编辑器"]
+  CHECK -->|是| REVERT["revertToTextEditor<br/>显式打开 default 文本编辑器"]
   CHECK -->|否| READER["openInReaderMode → 阅读视图"]
 
   CHECK --> T1["textModeUris 有记录<br/>用户刚从阅读切回文本"]
