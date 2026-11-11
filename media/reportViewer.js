@@ -4136,9 +4136,37 @@ function normalizeMermaidSvg(wrapper) {
   }
 }
 
+// Mermaid is ~3 MB, so it is fetched only the first time a document actually contains a diagram.
+const scriptNonce = document.currentScript?.nonce || "";
+let mermaidLoading = null;
+
+function loadMermaid() {
+  if (typeof mermaid !== "undefined") {
+    return Promise.resolve(true);
+  }
+  const src = document.body?.dataset.mermaidSrc;
+  if (!src) {
+    return Promise.resolve(false);
+  }
+  if (!mermaidLoading) {
+    mermaidLoading = new Promise((resolve) => {
+      const script = document.createElement("script");
+      script.src = src;
+      if (scriptNonce) script.nonce = scriptNonce;
+      script.onload = () => resolve(typeof mermaid !== "undefined");
+      script.onerror = () => {
+        mermaidLoading = null;
+        resolve(false);
+      };
+      document.head.appendChild(script);
+    });
+  }
+  return mermaidLoading;
+}
+
 async function hydrateMermaid(root) {
   const blocks = root.querySelectorAll(".mermaid-block[data-mermaid-source]");
-  if (!blocks.length || typeof mermaid === "undefined") {
+  if (!blocks.length || !(await loadMermaid())) {
     return;
   }
 

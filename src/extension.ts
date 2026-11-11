@@ -1377,7 +1377,9 @@ export class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProv
   }
 
   private getHtml(webview: vscode.Webview): string {
-    const cacheKey = String(Date.now());
+    // Stable for the lifetime of the extension host so the webview can reuse cached scripts
+    // across opens; a reload or update of the extension still busts the cache.
+    const cacheKey = `${this.context.extension.packageJSON.version}-${extensionActivatedAt}`;
     const cssUri = webview
       .asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "report.css"))
       .with({ query: `v=${cacheKey}` });
@@ -1397,7 +1399,7 @@ export class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProv
       .asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "highlightFormat.js"))
       .with({ query: `v=${cacheKey}` });
     const liveCssUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "livePreview.css"));
-    const nonce = cacheKey;
+    const nonce = `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
     const mathUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "readerMath.js")).with({ query: `v=${cacheKey}` });
     const katexUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "katex", "katex.min.js"));
     const katexCssUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "katex", "katex.min.css"));
@@ -1413,7 +1415,7 @@ export class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProv
   <link rel="stylesheet" href="${liveCssUri}" />
   <title>Report Markdown Viewer</title>
 </head>
-<body>
+<body data-mermaid-src="${mermaidUri}">
   <main id="reportLayout" class="report-layout layout-toc-open">
     <aside id="tocDock" class="toc-dock" aria-label="文档目录">
       <div class="toc-toolbar">
@@ -1508,7 +1510,6 @@ export class ReportMarkdownEditorProvider implements vscode.CustomTextEditorProv
       </div>
     </div>
   </div>
-  <script nonce="${nonce}" src="${mermaidUri}"></script>
   <script nonce="${nonce}" src="${katexUri}"></script>
   <script nonce="${nonce}" src="${mathUri}"></script>
   <script nonce="${nonce}" src="${highlightFormatUri}"></script>

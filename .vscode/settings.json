@@ -1,1 +1,20 @@
-{}
+{
+  "files.watcherExclude": {
+    "**/.vscode-test/**": true,
+    "**/node_modules/**": true,
+    "**/out/**": true,
+    "**/*.vsix": true
+  },
+  "search.exclude": {
+    "**/.vscode-test": true,
+    "**/node_modules": true,
+    "**/out": true,
+    "**/*.vsix": true,
+    "media/mermaid.min.js": true,
+    "media/livePreview.js": true,
+    "media/*.map": true
+  },
+  "files.exclude": {
+    "**/.vscode-test": true
+  }
+}
